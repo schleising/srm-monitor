@@ -21,3 +21,4 @@ target
 #.idea/
 
 secrets/
+srm-monitor/avg_rates.csv
