@@ -50,6 +50,7 @@ struct WirelessUplink {
     avg_tx_rate: u64,
     band: String,
     is_connected: bool,
+    signalstrength: i32,
 }
 
 pub struct Synology {
@@ -69,7 +70,7 @@ impl Synology {
         })
     }
 
-    pub fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, u64, u64)> {
+    pub fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, i32, u64, u64)> {
         let mesh = self.fetch_mesh_network_info()?;
         extract_avg_rates(&mesh, node_id)
     }
@@ -121,7 +122,10 @@ fn ensure_http_ok(context: &str, status: u16) -> Result<()> {
     Err(anyhow!("{} failed with status: {}", context, status))
 }
 
-fn extract_avg_rates(mesh: &MeshNetworkInfoResponse, node_id: i32) -> Result<(String, u64, u64)> {
+fn extract_avg_rates(
+    mesh: &MeshNetworkInfoResponse,
+    node_id: i32,
+) -> Result<(String, i32, u64, u64)> {
     // Response parsing and uplink selection live outside the HTTP methods so they can be unit tested
     // directly from fixture JSON without depending on the live Synology API.
     let node = mesh
@@ -134,7 +138,12 @@ fn extract_avg_rates(mesh: &MeshNetworkInfoResponse, node_id: i32) -> Result<(St
     let uplink = select_connected_uplink(node)
         .ok_or_else(|| anyhow!("No connected wireless uplinks found for node {}", node_id))?;
 
-    Ok((uplink.band.clone(), uplink.avg_rx_rate, uplink.avg_tx_rate))
+    Ok((
+        uplink.band.clone(),
+        uplink.signalstrength,
+        uplink.avg_rx_rate,
+        uplink.avg_tx_rate,
+    ))
 }
 
 fn select_connected_uplink(node: &Node) -> Option<&WirelessUplink> {
@@ -199,29 +208,29 @@ mod tests {
     fn extracts_rates_preferring_highest_connected_band() {
         let mesh = mesh_with_uplinks(
             r#"[
-                {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "2.4G", "is_connected": true},
-                {"avg_rx_rate": 300, "avg_tx_rate": 400, "band": "5G-2", "is_connected": true},
-                {"avg_rx_rate": 500, "avg_tx_rate": 600, "band": "5G-1", "is_connected": true}
+                {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "2.4G", "is_connected": true, "signalstrength": -70},
+                {"avg_rx_rate": 300, "avg_tx_rate": 400, "band": "5G-2", "is_connected": true, "signalstrength": -61},
+                {"avg_rx_rate": 500, "avg_tx_rate": 600, "band": "5G-1", "is_connected": true, "signalstrength": -55}
             ]"#,
         );
 
         let rates = extract_avg_rates(&mesh, 8).unwrap();
 
-        assert_eq!(rates, ("5G-1".to_string(), 500, 600));
+        assert_eq!(rates, ("5G-1".to_string(), -55, 500, 600));
     }
 
     #[test]
     fn ignores_disconnected_higher_priority_band() {
         let mesh = mesh_with_uplinks(
             r#"[
-                {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "5G-1", "is_connected": false},
-                {"avg_rx_rate": 300, "avg_tx_rate": 400, "band": "5G-2", "is_connected": true}
+                {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "5G-1", "is_connected": false, "signalstrength": -40},
+                {"avg_rx_rate": 300, "avg_tx_rate": 400, "band": "5G-2", "is_connected": true, "signalstrength": -65}
             ]"#,
         );
 
         let rates = extract_avg_rates(&mesh, 8).unwrap();
 
-        assert_eq!(rates, ("5G-2".to_string(), 300, 400));
+        assert_eq!(rates, ("5G-2".to_string(), -65, 300, 400));
     }
 
     #[test]
@@ -238,7 +247,7 @@ mod tests {
     fn errors_when_no_connected_uplink_exists() {
         let mesh = mesh_with_uplinks(
             r#"[
-                {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "5G-1", "is_connected": false}
+                {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "5G-1", "is_connected": false, "signalstrength": -50}
             ]"#,
         );
 
@@ -273,8 +282,8 @@ mod tests {
     fn select_connected_uplink_returns_none_when_all_are_disconnected() {
         let mesh = mesh_with_uplinks(
             r#"[
-                {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "2.4G", "is_connected": false},
-                {"avg_rx_rate": 300, "avg_tx_rate": 400, "band": "5G-2", "is_connected": false}
+                {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "2.4G", "is_connected": false, "signalstrength": -72},
+                {"avg_rx_rate": 300, "avg_tx_rate": 400, "band": "5G-2", "is_connected": false, "signalstrength": -68}
             ]"#,
         );
 

@@ -22,11 +22,11 @@ const SLEEP_SLICE_MILLIS: u64 = 250;
 // The monitor runtime talks to `Synology` in production, but these traits let tests
 // substitute deterministic connectors and sessions without making live HTTP calls.
 pub(crate) trait RatesClient {
-    fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, u64, u64)>;
+    fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, i32, u64, u64)>;
 }
 
 impl RatesClient for Synology {
-    fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, u64, u64)> {
+    fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, i32, u64, u64)> {
         Synology::fetch_avg_rates(self, node_id)
     }
 }
@@ -155,12 +155,19 @@ where
         };
 
         match fetch_result {
-            Ok((band, rx_bps, tx_bps)) => {
+            Ok((band, signal_strength, rx_bps, tx_bps)) => {
                 let now = Utc::now().with_timezone(&self.timezone);
                 let csv_timestamp = iso8601_timestamp(now);
 
-                append_sample(&mut self.csv_file, &csv_timestamp, &band, rx_bps, tx_bps)?;
-                self.print_band_change(now, &band, rx_bps, tx_bps);
+                append_sample(
+                    &mut self.csv_file,
+                    &csv_timestamp,
+                    &band,
+                    signal_strength,
+                    rx_bps,
+                    tx_bps,
+                )?;
+                self.print_band_change(now, &band, signal_strength, rx_bps, tx_bps);
             }
             Err(err) => {
                 eprintln!("error=fetch_failed details={}", err);
@@ -171,12 +178,22 @@ where
         Ok(())
     }
 
-    fn print_band_change(&mut self, now: DateTime<Tz>, band: &str, rx_bps: u64, tx_bps: u64) {
+    fn print_band_change(
+        &mut self,
+        now: DateTime<Tz>,
+        band: &str,
+        signal_strength: i32,
+        rx_bps: u64,
+        tx_bps: u64,
+    ) {
         if !should_emit_band_change(self.last_band.as_deref(), band) {
             return;
         }
 
-        println!("{}", format_band_change_line(now, band, rx_bps, tx_bps));
+        println!(
+            "{}",
+            format_band_change_line(now, band, signal_strength, rx_bps, tx_bps)
+        );
         self.last_band = Some(band.to_string());
     }
 
@@ -197,7 +214,7 @@ fn open_csv_file() -> Result<File> {
 
     // Write the header once so the CSV is immediately usable for later import/analysis.
     if file.metadata()?.len() == 0 {
-        writeln!(file, "timestamp,band,avg_rx_bps,avg_tx_bps")?;
+        writeln!(file, "timestamp,band,signalstrength,avg_rx_bps,avg_tx_bps")?;
     }
 
     Ok(file)
@@ -240,11 +257,18 @@ fn should_emit_band_change(last_band: Option<&str>, band: &str) -> bool {
     last_band != Some(band)
 }
 
-fn format_band_change_line(now: DateTime<Tz>, band: &str, rx_bps: u64, tx_bps: u64) -> String {
+fn format_band_change_line(
+    now: DateTime<Tz>,
+    band: &str,
+    signal_strength: i32,
+    rx_bps: u64,
+    tx_bps: u64,
+) -> String {
     format!(
-        "{:<TIMESTAMP_FIELD_WIDTH$} band={:<BAND_FIELD_WIDTH$} tx={} rx={}",
+        "{:<TIMESTAMP_FIELD_WIDTH$} band={:<BAND_FIELD_WIDTH$} signalstrength={} tx={} rx={}",
         console_timestamp(now),
         band,
+        signal_strength,
         format_bps(tx_bps),
         format_bps(rx_bps)
     )
@@ -254,11 +278,16 @@ fn append_sample<W: Write>(
     file: &mut W,
     timestamp: &str,
     band: &str,
+    signal_strength: i32,
     rx_bps: u64,
     tx_bps: u64,
 ) -> Result<()> {
     // Flush every sample so the CSV remains current even if the process is interrupted between polls.
-    writeln!(file, "{},{},{},{}", timestamp, band, rx_bps, tx_bps)?;
+    writeln!(
+        file,
+        "{},{},{},{},{}",
+        timestamp, band, signal_strength, rx_bps, tx_bps
+    )?;
     file.flush()?;
     Ok(())
 }
@@ -324,11 +353,11 @@ mod tests {
     use std::collections::VecDeque;
 
     struct MockSession {
-        fetch_results: RefCell<VecDeque<Result<(String, u64, u64)>>>,
+        fetch_results: RefCell<VecDeque<Result<(String, i32, u64, u64)>>>,
     }
 
     impl MockSession {
-        fn new(fetch_results: Vec<Result<(String, u64, u64)>>) -> Self {
+        fn new(fetch_results: Vec<Result<(String, i32, u64, u64)>>) -> Self {
             Self {
                 fetch_results: RefCell::new(fetch_results.into()),
             }
@@ -336,7 +365,7 @@ mod tests {
     }
 
     impl RatesClient for MockSession {
-        fn fetch_avg_rates(&self, _node_id: i32) -> Result<(String, u64, u64)> {
+        fn fetch_avg_rates(&self, _node_id: i32) -> Result<(String, i32, u64, u64)> {
             self.fetch_results
                 .borrow_mut()
                 .pop_front()
@@ -396,11 +425,11 @@ mod tests {
         let timezone = chrono_tz::Europe::London;
         let now = timezone.with_ymd_and_hms(2026, 3, 14, 21, 55, 0).unwrap();
 
-        let line = format_band_change_line(now, "5G-1", 1_300_000_000, 1_404_000_000);
+        let line = format_band_change_line(now, "5G-1", -55, 1_300_000_000, 1_404_000_000);
 
         assert_eq!(
             line,
-            "Sat 14th Mar 2026 21:55 GMT band=5G-1 tx=1.404 Gbps rx=1.300 Gbps"
+            "Sat 14th Mar 2026 21:55 GMT band=5G-1 signalstrength=-55 tx=1.404 Gbps rx=1.300 Gbps"
         );
     }
 
@@ -484,6 +513,7 @@ mod tests {
     fn poll_once_writes_csv_and_updates_last_band() {
         let connector = MockConnector::new(vec![Ok(MockSession::new(vec![Ok((
             "5G-1".to_string(),
+            -55,
             1_300_000_000,
             1_404_000_000,
         ))]))]);
@@ -493,7 +523,7 @@ mod tests {
         monitor.poll_once().unwrap();
 
         let csv = String::from_utf8(monitor.csv_file).unwrap();
-        assert!(csv.contains(",5G-1,1300000000,1404000000\n"));
+        assert!(csv.contains(",5G-1,-55,1300000000,1404000000\n"));
         assert_eq!(monitor.last_band.as_deref(), Some("5G-1"));
     }
 
@@ -513,8 +543,8 @@ mod tests {
     #[test]
     fn second_poll_with_changed_band_updates_last_band_and_appends_again() {
         let connector = MockConnector::new(vec![Ok(MockSession::new(vec![
-            Ok(("5G-2".to_string(), 300, 400)),
-            Ok(("5G-1".to_string(), 500, 600)),
+            Ok(("5G-2".to_string(), -65, 300, 400)),
+            Ok(("5G-1".to_string(), -55, 500, 600)),
         ]))]);
         let mut monitor = test_monitor(connector);
 
@@ -523,8 +553,8 @@ mod tests {
         monitor.poll_once().unwrap();
 
         let csv = String::from_utf8(monitor.csv_file).unwrap();
-        assert!(csv.contains(",5G-2,300,400\n"));
-        assert!(csv.contains(",5G-1,500,600\n"));
+        assert!(csv.contains(",5G-2,-65,300,400\n"));
+        assert!(csv.contains(",5G-1,-55,500,600\n"));
         assert_eq!(monitor.last_band.as_deref(), Some("5G-1"));
     }
 }
