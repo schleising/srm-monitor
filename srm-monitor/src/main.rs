@@ -3,6 +3,9 @@ mod synology;
 use anyhow::Result;
 use serde::Deserialize;
 
+const APP_NAME: &str = env!("CARGO_PKG_NAME");
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Deserialize)]
 struct TomlCredentials {
     credentials: Credentials,
@@ -22,6 +25,7 @@ fn read_credentials() -> Result<Credentials> {
 
 fn run() -> Result<()> {
     // `main` stays intentionally thin: load credentials, build the runtime, and hand off.
+    println!("{} v{}", APP_NAME, APP_VERSION);
     let creds = read_credentials()?;
     let mut monitor = monitor::Monitor::new()?;
     monitor.run(&creds.username, &creds.password)
