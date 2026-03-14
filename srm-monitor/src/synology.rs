@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::Deserialize;
 
 const SYNOLOGY_API_BASE_URL: &str = "http://192.168.1.1:8000/webapi";
@@ -185,10 +185,8 @@ mod tests {
 
     #[test]
     fn parses_login_response() {
-        let login: LoginResponse = serde_json::from_str(
-            r#"{"success":true,"data":{"sid":"session-id"}}"#,
-        )
-        .unwrap();
+        let login: LoginResponse =
+            serde_json::from_str(r#"{"success":true,"data":{"sid":"session-id"}}"#).unwrap();
 
         assert!(login.success);
         assert_eq!(login.data.sid, "session-id");
@@ -225,10 +223,8 @@ mod tests {
 
     #[test]
     fn errors_when_node_is_missing() {
-        let mesh: MeshNetworkInfoResponse = serde_json::from_str(
-            r#"{"data":{"nodes":[]}}"#,
-        )
-        .unwrap();
+        let mesh: MeshNetworkInfoResponse =
+            serde_json::from_str(r#"{"data":{"nodes":[]}}"#).unwrap();
 
         let error = extract_avg_rates(&mesh, 8).unwrap_err();
 
@@ -257,7 +253,10 @@ mod tests {
         assert!(ensure_http_ok("Mesh info API call", 200).is_ok());
 
         let error = ensure_http_ok("Mesh info API call", 500).unwrap_err();
-        assert_eq!(error.to_string(), "Mesh info API call failed with status: 500");
+        assert_eq!(
+            error.to_string(),
+            "Mesh info API call failed with status: 500"
+        );
     }
 
     #[test]

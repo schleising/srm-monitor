@@ -7,8 +7,8 @@ use signal_hook::flag;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -356,9 +356,7 @@ mod tests {
         }
     }
 
-    fn test_monitor(
-        connector: MockConnector,
-    ) -> Monitor<MockSession, MockConnector, Vec<u8>> {
+    fn test_monitor(connector: MockConnector) -> Monitor<MockSession, MockConnector, Vec<u8>> {
         Monitor::with_parts(
             chrono_tz::Europe::London,
             Arc::new(AtomicUsize::new(0)),
