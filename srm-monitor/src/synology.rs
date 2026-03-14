@@ -75,6 +75,8 @@ impl Synology {
             return Err(anyhow!("Login unsuccessful"));
         }
 
+        println!("Successfully logged in to Synology, session ID: {}", login.data.sid);
+
         Ok(Self {
             sid: login.data.sid,
         })
@@ -134,6 +136,9 @@ impl Synology {
                 resp.status()
             ));
         }
+
+        
+        println!("Logged out of Synology session");
 
         Ok(())
     }
