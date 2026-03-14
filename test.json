@@ -1,0 +1,93 @@
+{
+    "data": {
+        "nodes": [
+            {
+                "node_id": 0,
+                "parent_node_id": -1,
+                "uplink": {
+                    "is_ethernet_connected": false,
+                    "wireless_uplinks": []
+                },
+                "wifi_radios": [
+                    {
+                        "band": "2.4G",
+                        "current_channel": 12,
+                        "current_frame_rate_rx": 2,
+                        "current_frame_rate_tx": 38,
+                        "current_rate_rx": 531,
+                        "current_rate_tx": 17391
+                    },
+                    {
+                        "band": "5G-1",
+                        "current_channel": 100,
+                        "current_frame_rate_rx": 233,
+                        "current_frame_rate_tx": 2190,
+                        "current_rate_rx": 25952,
+                        "current_rate_tx": 1500539
+                    },
+                    {
+                        "band": "5G-2",
+                        "current_channel": 40,
+                        "current_frame_rate_rx": 37,
+                        "current_frame_rate_tx": 319,
+                        "current_rate_rx": 8313,
+                        "current_rate_tx": 566051
+                    }
+                ]
+            },
+            {
+                "node_id": 8,
+                "parent_node_id": 0,
+                "uplink": {
+                    "is_ethernet_connected": false,
+                    "wireless_uplinks": [
+                        {
+                            "avg_rx_rate": 192000000,
+                            "avg_tx_rate": 192000000,
+                            "band": "2.4G",
+                            "bssid": "a6:09:d0:29:35:e2",
+                            "is_connected": true,
+                            "signalstrength": 100
+                        },
+                        {
+                            "avg_rx_rate": 1300000000,
+                            "avg_tx_rate": 1733000000,
+                            "band": "5G-1",
+                            "bssid": "a6:09:d0:29:35:e3",
+                            "is_connected": true,
+                            "signalstrength": 78
+                        }
+                    ]
+                },
+                "wifi_radios": [
+                    {
+                        "band": "2.4G",
+                        "current_channel": 12,
+                        "current_frame_rate_rx": 27,
+                        "current_frame_rate_tx": 1,
+                        "current_rate_rx": 9384,
+                        "current_rate_tx": 2474
+                    },
+                    {
+                        "band": "5G-1",
+                        "current_channel": 100,
+                        "current_frame_rate_rx": 2376,
+                        "current_frame_rate_tx": 254,
+                        "current_rate_rx": 1745866,
+                        "current_rate_tx": 29938
+                    },
+                    {
+                        "band": "5G-2",
+                        "current_channel": 0,
+                        "current_frame_rate_rx": 2376,
+                        "current_frame_rate_tx": 254,
+                        "current_rate_rx": 1745866,
+                        "current_rate_tx": 29938
+                    }
+                ]
+            }
+        ],
+        "total": 2
+    },
+    "success": true
+}
