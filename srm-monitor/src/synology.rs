@@ -1,5 +1,5 @@
+use anyhow::{anyhow, Result};
 use serde::Deserialize;
-use std::error::Error;
 
 const SYNOLOGY_API_BASE_URL: &str = "http://192.168.1.1:8000/webapi";
 const SYNOLOGY_AUTH_API: &str = "SYNO.API.Auth";
@@ -57,7 +57,7 @@ pub struct Synology {
 }
 
 impl Synology {
-    pub fn new(username: &str, password: &str) -> Result<Self, Box<dyn Error>> {
+    pub fn new(username: &str, password: &str) -> Result<Self> {
         let mut resp = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_AUTH_URL))
             .query("api", SYNOLOGY_AUTH_API)
             .query("version", SYNOLOGY_AUTH_VERSION.to_string())
@@ -67,18 +67,20 @@ impl Synology {
             .call()?;
 
         if resp.status() != 200 {
-            return Err(format!("Login API call failed with status: {}", resp.status()).into());
+            return Err(anyhow!("Login API call failed with status: {}", resp.status()));
         }
 
         let login: LoginResponse = resp.body_mut().read_json()?;
         if !login.success {
-            return Err("Login unsuccessful".into());
+            return Err(anyhow!("Login unsuccessful"));
         }
 
-        Ok(Self { sid: login.data.sid })
+        Ok(Self {
+            sid: login.data.sid,
+        })
     }
 
-    pub fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, u64, u64), Box<dyn Error>> {
+    pub fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, u64, u64)> {
         let sid_hdr = format!("id={}", self.sid);
         let mut resp = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_ENTRY_URL))
             .query("api", SYNOLOGY_MESH_NETWORK_INFO_API)
@@ -88,7 +90,10 @@ impl Synology {
             .call()?;
 
         if resp.status() != 200 {
-            return Err(format!("Mesh info API call failed with status: {}", resp.status()).into());
+            return Err(anyhow!(
+                "Mesh info API call failed with status: {}",
+                resp.status()
+            ));
         }
 
         let mesh: MeshNetworkInfoResponse = resp.body_mut().read_json()?;
@@ -102,20 +107,19 @@ impl Synology {
                 .max_by_key(|u| band_priority(&u.band));
 
             if let Some(uplink) = selected {
-                    return Ok((
-                        uplink.band.clone(),
-                        uplink.avg_rx_rate,
-                        uplink.avg_tx_rate,
-                    ));
+                return Ok((uplink.band.clone(), uplink.avg_rx_rate, uplink.avg_tx_rate));
             }
 
-            return Err(format!("No connected wireless uplinks found for node {}", node_id).into());
+            return Err(anyhow!(
+                "No connected wireless uplinks found for node {}",
+                node_id
+            ));
         }
 
-        Err(format!("Node {} not found", node_id).into())
+        Err(anyhow!("Node {} not found", node_id))
     }
 
-    fn logout(&self) -> Result<(), Box<dyn Error>> {
+    fn logout(&self) -> Result<()> {
         let sid_hdr = format!("id={}", self.sid);
         let resp = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_AUTH_URL))
             .query("api", SYNOLOGY_AUTH_API)
@@ -125,7 +129,10 @@ impl Synology {
             .call()?;
 
         if resp.status() != 200 {
-            return Err(format!("Logout API call failed with status: {}", resp.status()).into());
+            return Err(anyhow!(
+                "Logout API call failed with status: {}",
+                resp.status()
+            ));
         }
 
         Ok(())
