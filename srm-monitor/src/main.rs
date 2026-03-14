@@ -1,6 +1,6 @@
 mod synology;
+use anyhow::Result;
 use serde::Deserialize;
-use std::error::Error;
 
 #[derive(Deserialize)]
 struct TomlCredentials {
@@ -13,7 +13,7 @@ struct Credentials {
     password: String,
 }
 
-fn read_credentials() -> Result<Credentials, Box<dyn Error>> {
+fn read_credentials() -> Result<Credentials> {
     let s = std::fs::read_to_string("secrets/srm_login.toml")?;
     let cfg: TomlCredentials = toml::from_str(&s)?;
     Ok(cfg.credentials)
@@ -36,11 +36,30 @@ fn format_bps(rate_bps: u64) -> String {
     }
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let creds = read_credentials()?;
+fn main() -> Result<()> {
+    let creds = match read_credentials() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to read credentials: {}", e);
+            return Err(e);
+        }
+    };
 
-    let synology = synology::Synology::new(&creds.username, &creds.password)?;
-    let (band, rx_bps, tx_bps) = synology.fetch_avg_rates(8)?;
+    let synology = match synology::Synology::new(&creds.username, &creds.password) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to create Synology session: {}", e);
+            return Err(e);
+        }
+    };
+
+    let (band, rx_bps, tx_bps) = match synology.fetch_avg_rates(8) {
+        Ok(rates) => rates,
+        Err(e) => {
+            eprintln!("Failed to fetch average rates: {}", e);
+            return Err(e);
+        }
+    };
 
     println!("Selected Band: {}", band);
     println!("Avg TX Rate: {}", format_bps(tx_bps));
