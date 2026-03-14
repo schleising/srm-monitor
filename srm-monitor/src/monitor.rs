@@ -19,23 +19,68 @@ const TIMESTAMP_FIELD_WIDTH: usize = 25;
 const BAND_FIELD_WIDTH: usize = 4;
 const SLEEP_SLICE_MILLIS: u64 = 250;
 
-pub struct Monitor {
-    timezone: Tz,
-    received_signal: Arc<AtomicUsize>,
-    csv_file: File,
-    last_band: Option<String>,
-    synology: Option<Synology>,
+pub(crate) trait RatesClient {
+    fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, u64, u64)>;
 }
 
-impl Monitor {
+impl RatesClient for Synology {
+    fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, u64, u64)> {
+        Synology::fetch_avg_rates(self, node_id)
+    }
+}
+
+pub(crate) trait SessionConnector<S> {
+    fn connect(&mut self, username: &str, password: &str) -> Result<S>;
+}
+
+pub(crate) struct LiveConnector;
+
+impl SessionConnector<Synology> for LiveConnector {
+    fn connect(&mut self, username: &str, password: &str) -> Result<Synology> {
+        Synology::new(username, password)
+    }
+}
+
+pub(crate) struct Monitor<S = Synology, C = LiveConnector, W = File> {
+    timezone: Tz,
+    received_signal: Arc<AtomicUsize>,
+    csv_file: W,
+    last_band: Option<String>,
+    synology: Option<S>,
+    connector: C,
+}
+
+impl Monitor<Synology, LiveConnector, File> {
     pub fn new() -> Result<Self> {
-        Ok(Self {
-            timezone: local_timezone()?,
-            received_signal: install_shutdown_handlers()?,
-            csv_file: open_csv_file()?,
+        Ok(Self::with_parts(
+            local_timezone()?,
+            install_shutdown_handlers()?,
+            open_csv_file()?,
+            LiveConnector,
+        ))
+    }
+}
+
+impl<S, C, W> Monitor<S, C, W>
+where
+    S: RatesClient,
+    C: SessionConnector<S>,
+    W: Write,
+{
+    fn with_parts(
+        timezone: Tz,
+        received_signal: Arc<AtomicUsize>,
+        csv_file: W,
+        connector: C,
+    ) -> Self {
+        Self {
+            timezone,
+            received_signal,
+            csv_file,
             last_band: None,
             synology: None,
-        })
+            connector,
+        }
     }
 
     pub fn run(&mut self, username: &str, password: &str) -> Result<()> {
@@ -79,7 +124,7 @@ impl Monitor {
             return true;
         }
 
-        match Synology::new(username, password) {
+        match self.connector.connect(username, password) {
             Ok(session) => {
                 self.synology = Some(session);
                 true
@@ -196,7 +241,13 @@ fn format_band_change_line(now: DateTime<Tz>, band: &str, rx_bps: u64, tx_bps: u
     )
 }
 
-fn append_sample(file: &mut File, timestamp: &str, band: &str, rx_bps: u64, tx_bps: u64) -> Result<()> {
+fn append_sample<W: Write>(
+    file: &mut W,
+    timestamp: &str,
+    band: &str,
+    rx_bps: u64,
+    tx_bps: u64,
+) -> Result<()> {
     writeln!(file, "{},{},{},{}", timestamp, band, rx_bps, tx_bps)?;
     file.flush()?;
     Ok(())
@@ -258,6 +309,63 @@ fn shutdown_signal_name(signal: usize) -> &'static str {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    struct MockSession {
+        fetch_results: RefCell<VecDeque<Result<(String, u64, u64)>>>,
+    }
+
+    impl MockSession {
+        fn new(fetch_results: Vec<Result<(String, u64, u64)>>) -> Self {
+            Self {
+                fetch_results: RefCell::new(fetch_results.into()),
+            }
+        }
+    }
+
+    impl RatesClient for MockSession {
+        fn fetch_avg_rates(&self, _node_id: i32) -> Result<(String, u64, u64)> {
+            self.fetch_results
+                .borrow_mut()
+                .pop_front()
+                .expect("expected queued fetch result")
+        }
+    }
+
+    struct MockConnector {
+        connect_results: VecDeque<Result<MockSession>>,
+        calls: usize,
+    }
+
+    impl MockConnector {
+        fn new(connect_results: Vec<Result<MockSession>>) -> Self {
+            Self {
+                connect_results: connect_results.into(),
+                calls: 0,
+            }
+        }
+    }
+
+    impl SessionConnector<MockSession> for MockConnector {
+        fn connect(&mut self, _username: &str, _password: &str) -> Result<MockSession> {
+            self.calls += 1;
+            self.connect_results
+                .pop_front()
+                .expect("expected queued connect result")
+        }
+    }
+
+    fn test_monitor(
+        connector: MockConnector,
+    ) -> Monitor<MockSession, MockConnector, Vec<u8>> {
+        Monitor::with_parts(
+            chrono_tz::Europe::London,
+            Arc::new(AtomicUsize::new(0)),
+            Vec::new(),
+            connector,
+        )
+    }
 
     #[test]
     fn emits_first_band_change() {
@@ -340,5 +448,74 @@ mod tests {
             Duration::ZERO,
             Duration::from_millis(250)
         ));
+    }
+
+    #[test]
+    fn ensure_session_connects_once_when_missing() {
+        let connector = MockConnector::new(vec![Ok(MockSession::new(vec![]))]);
+        let mut monitor = test_monitor(connector);
+
+        assert!(monitor.ensure_session("user", "pass"));
+        assert_eq!(monitor.connector.calls, 1);
+        assert!(monitor.synology.is_some());
+    }
+
+    #[test]
+    fn ensure_session_does_not_reconnect_when_session_exists() {
+        let connector = MockConnector::new(vec![Ok(MockSession::new(vec![]))]);
+        let mut monitor = test_monitor(connector);
+
+        assert!(monitor.ensure_session("user", "pass"));
+        assert!(monitor.ensure_session("user", "pass"));
+
+        assert_eq!(monitor.connector.calls, 1);
+    }
+
+    #[test]
+    fn poll_once_writes_csv_and_updates_last_band() {
+        let connector = MockConnector::new(vec![Ok(MockSession::new(vec![Ok((
+            "5G-1".to_string(),
+            1_300_000_000,
+            1_404_000_000,
+        ))]))]);
+        let mut monitor = test_monitor(connector);
+
+        assert!(monitor.ensure_session("user", "pass"));
+        monitor.poll_once().unwrap();
+
+        let csv = String::from_utf8(monitor.csv_file).unwrap();
+        assert!(csv.contains(",5G-1,1300000000,1404000000\n"));
+        assert_eq!(monitor.last_band.as_deref(), Some("5G-1"));
+    }
+
+    #[test]
+    fn poll_once_clears_session_after_fetch_failure() {
+        let connector = MockConnector::new(vec![Ok(MockSession::new(vec![Err(anyhow::anyhow!(
+            "boom"
+        ))]))]);
+        let mut monitor = test_monitor(connector);
+
+        assert!(monitor.ensure_session("user", "pass"));
+        monitor.poll_once().unwrap();
+
+        assert!(monitor.synology.is_none());
+    }
+
+    #[test]
+    fn second_poll_with_changed_band_updates_last_band_and_appends_again() {
+        let connector = MockConnector::new(vec![Ok(MockSession::new(vec![
+            Ok(("5G-2".to_string(), 300, 400)),
+            Ok(("5G-1".to_string(), 500, 600)),
+        ]))]);
+        let mut monitor = test_monitor(connector);
+
+        assert!(monitor.ensure_session("user", "pass"));
+        monitor.poll_once().unwrap();
+        monitor.poll_once().unwrap();
+
+        let csv = String::from_utf8(monitor.csv_file).unwrap();
+        assert!(csv.contains(",5G-2,300,400\n"));
+        assert!(csv.contains(",5G-1,500,600\n"));
+        assert_eq!(monitor.last_band.as_deref(), Some("5G-1"));
     }
 }
