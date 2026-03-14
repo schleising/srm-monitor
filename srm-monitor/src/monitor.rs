@@ -44,7 +44,9 @@ impl Monitor {
                 return Ok(());
             }
 
-            self.ensure_session(username, password);
+            if !self.ensure_session(username, password) {
+                continue;
+            }
 
             self.poll_once()?;
 
@@ -72,16 +74,21 @@ impl Monitor {
         true
     }
 
-    fn ensure_session(&mut self, username: &str, password: &str) {
+    fn ensure_session(&mut self, username: &str, password: &str) -> bool {
         if self.synology.is_some() {
-            return;
+            return true;
         }
 
         match Synology::new(username, password) {
-            Ok(session) => self.synology = Some(session),
+            Ok(session) => {
+                self.synology = Some(session);
+                true
+            }
             Err(err) => {
                 eprintln!("error=login_failed details={}", err);
+                // Back off once after a failed login; the caller skips the normal end-of-loop sleep.
                 self.sleep_until_next_poll();
+                false
             }
         }
     }

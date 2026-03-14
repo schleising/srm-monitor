@@ -131,6 +131,7 @@ fn ensure_http_ok(context: &str, status: u16) -> Result<()> {
 }
 
 fn select_connected_uplink(node: &Node) -> Option<&WirelessUplink> {
+    // Prefer the best connected uplink by band priority so disconnected entries never win.
     node.uplink
         .wireless_uplinks
         .iter()
