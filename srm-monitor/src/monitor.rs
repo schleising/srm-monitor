@@ -288,6 +288,39 @@ mod tests {
     }
 
     #[test]
+    fn console_timestamp_uses_bst_after_dst_change() {
+        let timezone = chrono_tz::Europe::London;
+        let now = timezone.with_ymd_and_hms(2026, 3, 29, 17, 35, 0).unwrap();
+
+        assert_eq!(console_timestamp(now), "Sun 29th Mar 2026 17:35 BST");
+    }
+
+    #[test]
+    fn day_suffix_handles_teens_and_ordinal_endings() {
+        assert_eq!(day_suffix(11), "th");
+        assert_eq!(day_suffix(12), "th");
+        assert_eq!(day_suffix(13), "th");
+        assert_eq!(day_suffix(21), "st");
+        assert_eq!(day_suffix(22), "nd");
+        assert_eq!(day_suffix(23), "rd");
+        assert_eq!(day_suffix(24), "th");
+    }
+
+    #[test]
+    fn format_bps_respects_unit_boundaries() {
+        assert_eq!(format_bps(999), "999 bps");
+        assert_eq!(format_bps(1_000), "1.000 Kbps");
+        assert_eq!(format_bps(1_500_000), "1.500 Mbps");
+    }
+
+    #[test]
+    fn shutdown_signal_name_maps_known_signals() {
+        assert_eq!(shutdown_signal_name(SIGINT as usize), "SIGINT");
+        assert_eq!(shutdown_signal_name(SIGTERM as usize), "SIGTERM");
+        assert_eq!(shutdown_signal_name(999), "UNKNOWN");
+    }
+
+    #[test]
     fn sleep_returns_immediately_when_signal_is_already_set() {
         let signal = AtomicUsize::new(SIGTERM as usize);
 
