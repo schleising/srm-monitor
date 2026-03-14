@@ -12,6 +12,8 @@ use std::time::Duration;
 const CSV_FILE_PATH: &str = "avg_rates.csv";
 const NODE_ID: i32 = 8;
 const POLL_INTERVAL_SECS: u64 = 30;
+const TIMESTAMP_FIELD_WIDTH: usize = 25;
+const BAND_FIELD_WIDTH: usize = 4;
 
 #[derive(Deserialize)]
 struct TomlCredentials {
@@ -84,7 +86,7 @@ fn day_suffix(day: u32) -> &'static str {
 fn console_timestamp(now: DateTime<Tz>) -> String {
     let day = now.day();
     format!(
-        "{} {}{} {} {}",
+        "{} {:>2}{} {} {}",
         now.format("%a"),
         day,
         day_suffix(day),
@@ -145,7 +147,7 @@ fn run() -> Result<()> {
 
                 if last_band.as_deref() != Some(band.as_str()) {
                     println!(
-                        "{} band={} tx={} rx={}",
+                        "{:<TIMESTAMP_FIELD_WIDTH$} band={:<BAND_FIELD_WIDTH$} tx={} rx={}",
                         console_timestamp(now),
                         band,
                         format_bps(tx_bps),
