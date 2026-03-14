@@ -22,9 +22,8 @@ fn read_credentials() -> Result<Credentials, Box<dyn Error>> {
 fn main() -> Result<(), Box<dyn Error>> {
     let creds = read_credentials()?;
 
-    // Fetch avg rates (fetch_avg_rates handles login + fetch + logout)
-    let (rx_gbps, tx_gbps) =
-        synology::fetch_avg_rates(&creds.username, &creds.password, 8, "5G-1")?;
+    let synology = synology::Synology::new(&creds.username, &creds.password)?;
+    let (rx_gbps, tx_gbps) = synology.fetch_avg_rates(8, "5G-1")?;
 
     println!("Avg TX Rate: {} Gbps", tx_gbps);
     println!("Avg RX Rate: {} Gbps", rx_gbps);

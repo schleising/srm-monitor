@@ -51,88 +51,81 @@ struct WirelessUplink {
     band: String,
 }
 
-pub fn fetch_avg_rates(
-    username: &str,
-    password: &str,
-    node_id: i32,
-    band: &str,
-) -> Result<(f64, f64), Box<dyn Error>> {
-    // Convenience: login, fetch, logout
-    let sid = login(username, password)?;
-    let result = get_avg_rates_with_sid(&sid, node_id, band);
-    // Ensure logout is attempted regardless of result
-    let _ = logout(&sid);
-    result
+pub struct Synology {
+    sid: String,
 }
 
-/// Log in and return the session id string (not header form)
-fn login(username: &str, password: &str) -> Result<String, Box<dyn Error>> {
-    let mut resp = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_AUTH_URL))
-        .query("api", SYNOLOGY_AUTH_API)
-        .query("version", SYNOLOGY_AUTH_VERSION.to_string())
-        .query("method", SYNOLOGY_AUTH_LOGIN_METHOD)
-        .query("account", username)
-        .query("passwd", password)
-        .call()?;
+impl Synology {
+    pub fn new(username: &str, password: &str) -> Result<Self, Box<dyn Error>> {
+        let mut resp = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_AUTH_URL))
+            .query("api", SYNOLOGY_AUTH_API)
+            .query("version", SYNOLOGY_AUTH_VERSION.to_string())
+            .query("method", SYNOLOGY_AUTH_LOGIN_METHOD)
+            .query("account", username)
+            .query("passwd", password)
+            .call()?;
 
-    if resp.status() != 200 {
-        return Err(format!("Login API call failed with status: {}", resp.status()).into());
+        if resp.status() != 200 {
+            return Err(format!("Login API call failed with status: {}", resp.status()).into());
+        }
+
+        let login: LoginResponse = resp.body_mut().read_json()?;
+        if !login.success {
+            return Err("Login unsuccessful".into());
+        }
+
+        Ok(Self { sid: login.data.sid })
     }
 
-    let login: LoginResponse = resp.body_mut().read_json()?;
-    if !login.success {
-        return Err("Login unsuccessful".into());
-    }
+    pub fn fetch_avg_rates(&self, node_id: i32, band: &str) -> Result<(f64, f64), Box<dyn Error>> {
+        let sid_hdr = format!("id={}", self.sid);
+        let mut resp = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_ENTRY_URL))
+            .query("api", SYNOLOGY_MESH_NETWORK_INFO_API)
+            .query("version", SYNOLOGY_MESH_NETWORK_INFO_VERSION.to_string())
+            .query("method", SYNOLOGY_MESH_NETWORK_INFO_METHOD)
+            .header("Cookie", &sid_hdr)
+            .call()?;
 
-    Ok(login.data.sid)
-}
+        if resp.status() != 200 {
+            return Err(format!("Mesh info API call failed with status: {}", resp.status()).into());
+        }
 
-/// Logout using a session id
-fn logout(sid: &str) -> Result<(), Box<dyn Error>> {
-    let sid_hdr = format!("id={}", sid);
-    let resp = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_AUTH_URL))
-        .query("api", SYNOLOGY_AUTH_API)
-        .query("version", SYNOLOGY_AUTH_VERSION.to_string())
-        .query("method", SYNOLOGY_AUTH_LOGOUT_METHOD)
-        .header("Cookie", &sid_hdr)
-        .call()?;
+        let mesh: MeshNetworkInfoResponse = resp.body_mut().read_json()?;
 
-    if resp.status() != 200 {
-        return Err(format!("Logout API call failed with status: {}", resp.status()).into());
-    }
+        if let Some(node) = mesh.data.nodes.iter().find(|n| n.node_id == node_id) {
+            if let Some(uplink) = node.uplink.wireless_uplinks.iter().find(|u| u.band == band) {
+                let rx_gbps = uplink.avg_rx_rate as f64 / 1_000_000_000.0;
+                let tx_gbps = uplink.avg_tx_rate as f64 / 1_000_000_000.0;
+                return Ok((rx_gbps, tx_gbps));
+            }
 
-    Ok(())
-}
-
-/// Fetch avg RX/TX rates using an existing session id
-fn get_avg_rates_with_sid(
-    sid: &str,
-    node_id: i32,
-    band: &str,
-) -> Result<(f64, f64), Box<dyn Error>> {
-    let sid_hdr = format!("id={}", sid);
-    let mut resp = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_ENTRY_URL))
-        .query("api", SYNOLOGY_MESH_NETWORK_INFO_API)
-        .query("version", SYNOLOGY_MESH_NETWORK_INFO_VERSION.to_string())
-        .query("method", SYNOLOGY_MESH_NETWORK_INFO_METHOD)
-        .header("Cookie", &sid_hdr)
-        .call()?;
-
-    if resp.status() != 200 {
-        return Err(format!("Mesh info API call failed with status: {}", resp.status()).into());
-    }
-
-    let mesh: MeshNetworkInfoResponse = resp.body_mut().read_json()?;
-
-    if let Some(node) = mesh.data.nodes.iter().find(|n| n.node_id == node_id) {
-        if let Some(uplink) = node.uplink.wireless_uplinks.iter().find(|u| u.band == band) {
-            let rx_gbps = uplink.avg_rx_rate as f64 / 1_000_000_000.0;
-            let tx_gbps = uplink.avg_tx_rate as f64 / 1_000_000_000.0;
-            return Ok((rx_gbps, tx_gbps));
-        } else {
             return Err(format!("Band {} not found for node {}", band, node_id).into());
         }
+
+        Err(format!("Node {} not found", node_id).into())
     }
 
-    Err(format!("Node {} not found", node_id).into())
+    fn logout(&self) -> Result<(), Box<dyn Error>> {
+        let sid_hdr = format!("id={}", self.sid);
+        let resp = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_AUTH_URL))
+            .query("api", SYNOLOGY_AUTH_API)
+            .query("version", SYNOLOGY_AUTH_VERSION.to_string())
+            .query("method", SYNOLOGY_AUTH_LOGOUT_METHOD)
+            .header("Cookie", &sid_hdr)
+            .call()?;
+
+        if resp.status() != 200 {
+            return Err(format!("Logout API call failed with status: {}", resp.status()).into());
+        }
+
+        Ok(())
+    }
+}
+
+impl Drop for Synology {
+    fn drop(&mut self) {
+        if let Err(e) = self.logout() {
+            eprintln!("Warning: failed to logout from Synology session: {}", e);
+        }
+    }
 }
