@@ -70,17 +70,7 @@ impl Synology {
 
     pub fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, u64, u64)> {
         let mesh = self.fetch_mesh_network_info()?;
-        let node = mesh
-            .data
-            .nodes
-            .iter()
-            .find(|candidate| candidate.node_id == node_id)
-            .ok_or_else(|| anyhow!("Node {} not found", node_id))?;
-
-        let uplink = select_connected_uplink(node)
-            .ok_or_else(|| anyhow!("No connected wireless uplinks found for node {}", node_id))?;
-
-        Ok((uplink.band.clone(), uplink.avg_rx_rate, uplink.avg_tx_rate))
+        extract_avg_rates(&mesh, node_id)
     }
 
     fn logout(&self) -> Result<()> {
@@ -130,6 +120,20 @@ fn ensure_http_ok(context: &str, status: u16) -> Result<()> {
     Err(anyhow!("{} failed with status: {}", context, status))
 }
 
+fn extract_avg_rates(mesh: &MeshNetworkInfoResponse, node_id: i32) -> Result<(String, u64, u64)> {
+    let node = mesh
+        .data
+        .nodes
+        .iter()
+        .find(|candidate| candidate.node_id == node_id)
+        .ok_or_else(|| anyhow!("Node {} not found", node_id))?;
+
+    let uplink = select_connected_uplink(node)
+        .ok_or_else(|| anyhow!("No connected wireless uplinks found for node {}", node_id))?;
+
+    Ok((uplink.band.clone(), uplink.avg_rx_rate, uplink.avg_tx_rate))
+}
+
 fn select_connected_uplink(node: &Node) -> Option<&WirelessUplink> {
     // Prefer the best connected uplink by band priority so disconnected entries never win.
     node.uplink
@@ -153,5 +157,115 @@ impl Drop for Synology {
         if let Err(e) = self.logout() {
             eprintln!("Warning: failed to logout from Synology session: {}", e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_login_response() {
+        let login: LoginResponse = serde_json::from_str(
+            r#"{"success":true,"data":{"sid":"session-id"}}"#,
+        )
+        .unwrap();
+
+        assert!(login.success);
+        assert_eq!(login.data.sid, "session-id");
+    }
+
+    #[test]
+    fn extracts_rates_preferring_highest_connected_band() {
+        let mesh: MeshNetworkInfoResponse = serde_json::from_str(
+            r#"{
+                "data": {
+                    "nodes": [
+                        {
+                            "node_id": 8,
+                            "uplink": {
+                                "wireless_uplinks": [
+                                    {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "2.4G", "is_connected": true},
+                                    {"avg_rx_rate": 300, "avg_tx_rate": 400, "band": "5G-2", "is_connected": true},
+                                    {"avg_rx_rate": 500, "avg_tx_rate": 600, "band": "5G-1", "is_connected": true}
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let rates = extract_avg_rates(&mesh, 8).unwrap();
+
+        assert_eq!(rates, ("5G-1".to_string(), 500, 600));
+    }
+
+    #[test]
+    fn ignores_disconnected_higher_priority_band() {
+        let mesh: MeshNetworkInfoResponse = serde_json::from_str(
+            r#"{
+                "data": {
+                    "nodes": [
+                        {
+                            "node_id": 8,
+                            "uplink": {
+                                "wireless_uplinks": [
+                                    {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "5G-1", "is_connected": false},
+                                    {"avg_rx_rate": 300, "avg_tx_rate": 400, "band": "5G-2", "is_connected": true}
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let rates = extract_avg_rates(&mesh, 8).unwrap();
+
+        assert_eq!(rates, ("5G-2".to_string(), 300, 400));
+    }
+
+    #[test]
+    fn errors_when_node_is_missing() {
+        let mesh: MeshNetworkInfoResponse = serde_json::from_str(
+            r#"{"data":{"nodes":[]}}"#,
+        )
+        .unwrap();
+
+        let error = extract_avg_rates(&mesh, 8).unwrap_err();
+
+        assert!(error.to_string().contains("Node 8 not found"));
+    }
+
+    #[test]
+    fn errors_when_no_connected_uplink_exists() {
+        let mesh: MeshNetworkInfoResponse = serde_json::from_str(
+            r#"{
+                "data": {
+                    "nodes": [
+                        {
+                            "node_id": 8,
+                            "uplink": {
+                                "wireless_uplinks": [
+                                    {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "5G-1", "is_connected": false}
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let error = extract_avg_rates(&mesh, 8).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("No connected wireless uplinks found for node 8")
+        );
     }
 }

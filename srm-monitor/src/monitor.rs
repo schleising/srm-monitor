@@ -119,35 +119,20 @@ impl Monitor {
     }
 
     fn print_band_change(&mut self, now: DateTime<Tz>, band: &str, rx_bps: u64, tx_bps: u64) {
-        if self.last_band.as_deref() == Some(band) {
+        if !should_emit_band_change(self.last_band.as_deref(), band) {
             return;
         }
 
-        println!(
-            "{:<TIMESTAMP_FIELD_WIDTH$} band={:<BAND_FIELD_WIDTH$} tx={} rx={}",
-            console_timestamp(now),
-            band,
-            format_bps(tx_bps),
-            format_bps(rx_bps)
-        );
+        println!("{}", format_band_change_line(now, band, rx_bps, tx_bps));
         self.last_band = Some(band.to_string());
     }
 
     fn sleep_until_next_poll(&self) -> bool {
-        let mut remaining = Duration::from_secs(POLL_INTERVAL_SECS);
-        let sleep_slice = Duration::from_millis(SLEEP_SLICE_MILLIS);
-
-        while remaining > Duration::ZERO {
-            if self.received_signal.load(Ordering::Relaxed) != 0 {
-                return true;
-            }
-
-            let current_sleep = remaining.min(sleep_slice);
-            thread::sleep(current_sleep);
-            remaining = remaining.saturating_sub(current_sleep);
-        }
-
-        self.received_signal.load(Ordering::Relaxed) != 0
+        sleep_until_signal_or_timeout(
+            self.received_signal.as_ref(),
+            Duration::from_secs(POLL_INTERVAL_SECS),
+            Duration::from_millis(SLEEP_SLICE_MILLIS),
+        )
     }
 }
 
@@ -197,6 +182,20 @@ fn console_timestamp(now: DateTime<Tz>) -> String {
     )
 }
 
+fn should_emit_band_change(last_band: Option<&str>, band: &str) -> bool {
+    last_band != Some(band)
+}
+
+fn format_band_change_line(now: DateTime<Tz>, band: &str, rx_bps: u64, tx_bps: u64) -> String {
+    format!(
+        "{:<TIMESTAMP_FIELD_WIDTH$} band={:<BAND_FIELD_WIDTH$} tx={} rx={}",
+        console_timestamp(now),
+        band,
+        format_bps(tx_bps),
+        format_bps(rx_bps)
+    )
+}
+
 fn append_sample(file: &mut File, timestamp: &str, band: &str, rx_bps: u64, tx_bps: u64) -> Result<()> {
     writeln!(file, "{},{},{},{}", timestamp, band, rx_bps, tx_bps)?;
     file.flush()?;
@@ -227,10 +226,86 @@ fn install_shutdown_handlers() -> Result<Arc<AtomicUsize>> {
     Ok(received_signal)
 }
 
+fn sleep_until_signal_or_timeout(
+    received_signal: &AtomicUsize,
+    poll_interval: Duration,
+    sleep_slice: Duration,
+) -> bool {
+    let mut remaining = poll_interval;
+
+    while remaining > Duration::ZERO {
+        if received_signal.load(Ordering::Relaxed) != 0 {
+            return true;
+        }
+
+        let current_sleep = remaining.min(sleep_slice);
+        thread::sleep(current_sleep);
+        remaining = remaining.saturating_sub(current_sleep);
+    }
+
+    received_signal.load(Ordering::Relaxed) != 0
+}
+
 fn shutdown_signal_name(signal: usize) -> &'static str {
     match signal as i32 {
         SIGINT => "SIGINT",
         SIGTERM => "SIGTERM",
         _ => "UNKNOWN",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn emits_first_band_change() {
+        assert!(should_emit_band_change(None, "5G-1"));
+    }
+
+    #[test]
+    fn suppresses_same_band_change() {
+        assert!(!should_emit_band_change(Some("5G-1"), "5G-1"));
+    }
+
+    #[test]
+    fn emits_when_band_changes() {
+        assert!(should_emit_band_change(Some("2.4G"), "5G-1"));
+    }
+
+    #[test]
+    fn formats_band_change_line_with_fixed_columns() {
+        let timezone = chrono_tz::Europe::London;
+        let now = timezone.with_ymd_and_hms(2026, 3, 14, 21, 55, 0).unwrap();
+
+        let line = format_band_change_line(now, "5G-1", 1_300_000_000, 1_404_000_000);
+
+        assert_eq!(
+            line,
+            "Sat 14th Mar 2026 21:55 GMT band=5G-1 tx=1.404 Gbps rx=1.300 Gbps"
+        );
+    }
+
+    #[test]
+    fn sleep_returns_immediately_when_signal_is_already_set() {
+        let signal = AtomicUsize::new(SIGTERM as usize);
+
+        assert!(sleep_until_signal_or_timeout(
+            &signal,
+            Duration::from_secs(30),
+            Duration::from_millis(250)
+        ));
+    }
+
+    #[test]
+    fn sleep_reports_no_signal_for_zero_duration() {
+        let signal = AtomicUsize::new(0);
+
+        assert!(!sleep_until_signal_or_timeout(
+            &signal,
+            Duration::ZERO,
+            Duration::from_millis(250)
+        ));
     }
 }
