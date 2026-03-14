@@ -19,6 +19,8 @@ const TIMESTAMP_FIELD_WIDTH: usize = 25;
 const BAND_FIELD_WIDTH: usize = 4;
 const SLEEP_SLICE_MILLIS: u64 = 250;
 
+// The monitor runtime talks to `Synology` in production, but these traits let tests
+// substitute deterministic connectors and sessions without making live HTTP calls.
 pub(crate) trait RatesClient {
     fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, u64, u64)>;
 }
@@ -85,10 +87,13 @@ where
 
     pub fn run(&mut self, username: &str, password: &str) -> Result<()> {
         loop {
+            // Shutdown is checked before each poll cycle so SIGINT/SIGTERM can break the loop,
+            // drop the active session, and let the process exit cleanly.
             if self.handle_shutdown() {
                 return Ok(());
             }
 
+            // The session is created lazily and recreated after transient login/fetch failures.
             if !self.ensure_session(username, password) {
                 continue;
             }
@@ -107,6 +112,7 @@ where
             return false;
         }
 
+        // Taking the session out of the monitor forces `Drop` to run before the process exits.
         println!(
             "shutdown signal={} action=cleanup",
             shutdown_signal_name(signal)
@@ -143,6 +149,8 @@ where
             let Some(session) = self.synology.as_ref() else {
                 return Ok(());
             };
+            // Keep the immutable borrow scoped to the fetch call so we can mutate monitor state
+            // afterward if the fetch fails or if a new band needs to be recorded.
             session.fetch_avg_rates(NODE_ID)
         };
 
@@ -187,6 +195,7 @@ fn open_csv_file() -> Result<File> {
         .append(true)
         .open(CSV_FILE_PATH)?;
 
+    // Write the header once so the CSV is immediately usable for later import/analysis.
     if file.metadata()?.len() == 0 {
         writeln!(file, "timestamp,band,avg_rx_bps,avg_tx_bps")?;
     }
@@ -248,6 +257,7 @@ fn append_sample<W: Write>(
     rx_bps: u64,
     tx_bps: u64,
 ) -> Result<()> {
+    // Flush every sample so the CSV remains current even if the process is interrupted between polls.
     writeln!(file, "{},{},{},{}", timestamp, band, rx_bps, tx_bps)?;
     file.flush()?;
     Ok(())
@@ -282,6 +292,7 @@ fn sleep_until_signal_or_timeout(
     poll_interval: Duration,
     sleep_slice: Duration,
 ) -> bool {
+    // Sleep in short slices so a signal can interrupt the wait without blocking for the full poll interval.
     let mut remaining = poll_interval;
 
     while remaining > Duration::ZERO {

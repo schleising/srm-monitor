@@ -58,6 +58,7 @@ pub struct Synology {
 
 impl Synology {
     pub fn new(username: &str, password: &str) -> Result<Self> {
+        // Login is front-loaded so later mesh requests only need the session cookie.
         let login = Self::login(username, password)?;
         if !login.success {
             return Err(anyhow!("Login unsuccessful"));
@@ -121,6 +122,8 @@ fn ensure_http_ok(context: &str, status: u16) -> Result<()> {
 }
 
 fn extract_avg_rates(mesh: &MeshNetworkInfoResponse, node_id: i32) -> Result<(String, u64, u64)> {
+    // Response parsing and uplink selection live outside the HTTP methods so they can be unit tested
+    // directly from fixture JSON without depending on the live Synology API.
     let node = mesh
         .data
         .nodes

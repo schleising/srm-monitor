@@ -21,6 +21,7 @@ fn read_credentials() -> Result<Credentials> {
 }
 
 fn run() -> Result<()> {
+    // `main` stays intentionally thin: load credentials, build the runtime, and hand off.
     let creds = read_credentials()?;
     let mut monitor = monitor::Monitor::new()?;
     monitor.run(&creds.username, &creds.password)
