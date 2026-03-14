@@ -49,6 +49,7 @@ struct WirelessUplink {
     avg_rx_rate: u64,
     avg_tx_rate: u64,
     band: String,
+    is_connected: bool,
 }
 
 pub struct Synology {
@@ -77,7 +78,7 @@ impl Synology {
         Ok(Self { sid: login.data.sid })
     }
 
-    pub fn fetch_avg_rates(&self, node_id: i32, band: &str) -> Result<(f64, f64), Box<dyn Error>> {
+    pub fn fetch_avg_rates(&self, node_id: i32) -> Result<(String, u64, u64), Box<dyn Error>> {
         let sid_hdr = format!("id={}", self.sid);
         let mut resp = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_ENTRY_URL))
             .query("api", SYNOLOGY_MESH_NETWORK_INFO_API)
@@ -93,13 +94,22 @@ impl Synology {
         let mesh: MeshNetworkInfoResponse = resp.body_mut().read_json()?;
 
         if let Some(node) = mesh.data.nodes.iter().find(|n| n.node_id == node_id) {
-            if let Some(uplink) = node.uplink.wireless_uplinks.iter().find(|u| u.band == band) {
-                let rx_gbps = uplink.avg_rx_rate as f64 / 1_000_000_000.0;
-                let tx_gbps = uplink.avg_tx_rate as f64 / 1_000_000_000.0;
-                return Ok((rx_gbps, tx_gbps));
+            let selected = node
+                .uplink
+                .wireless_uplinks
+                .iter()
+                .filter(|u| u.is_connected)
+                .max_by_key(|u| band_priority(&u.band));
+
+            if let Some(uplink) = selected {
+                    return Ok((
+                        uplink.band.clone(),
+                        uplink.avg_rx_rate,
+                        uplink.avg_tx_rate,
+                    ));
             }
 
-            return Err(format!("Band {} not found for node {}", band, node_id).into());
+            return Err(format!("No connected wireless uplinks found for node {}", node_id).into());
         }
 
         Err(format!("Node {} not found", node_id).into())
@@ -119,6 +129,15 @@ impl Synology {
         }
 
         Ok(())
+    }
+}
+
+fn band_priority(band: &str) -> u8 {
+    match band {
+        "2.4G" => 1,
+        "5G-2" => 2,
+        "5G-1" => 3,
+        _ => 0,
     }
 }
 
