@@ -2,6 +2,7 @@ mod graph;
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeDelta, Utc};
 use srm_common::config::{ApiClientSettings, GuiConfig, env_or_manifest_path, load_toml_file};
+use srm_common::format_error_chain;
 use srm_common::models::TelemetrySample;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread;
@@ -37,7 +38,7 @@ fn run() -> Result<()> {
 
 fn main() {
     if let Err(err) = run() {
-        eprintln!("error=fatal details={}", err);
+        eprintln!("error=fatal details={}", format_error_chain(&err));
         std::process::exit(1);
     }
 }

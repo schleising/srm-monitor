@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use mongodb::Client;
 use srm_common::config::{ServiceConfig, env_or_manifest_path, load_toml_file};
+use srm_common::format_error_chain;
 use srm_common::models::{MongoTelemetryRecord, TelemetrySample, ensure_telemetry_indexes};
 use srm_common::synology::Synology;
 use tokio::time::{Duration, sleep};
@@ -14,7 +15,7 @@ const DEFAULT_CONFIG_PATH: &str = "config/service.toml";
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
-        eprintln!("error=fatal details={}", error);
+        eprintln!("error=fatal details={}", format_error_chain(&error));
         std::process::exit(1);
     }
 }

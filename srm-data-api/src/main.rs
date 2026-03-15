@@ -9,6 +9,7 @@ use futures_util::TryStreamExt;
 use mongodb::{Client, Collection};
 use serde::Deserialize;
 use srm_common::config::{ApiConfig, env_or_manifest_path, load_toml_file};
+use srm_common::format_error_chain;
 use srm_common::models::{MongoTelemetryRecord, TelemetrySample, ensure_telemetry_indexes};
 
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
@@ -30,7 +31,7 @@ struct TelemetryQuery {
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
-        eprintln!("error=fatal details={}", error);
+        eprintln!("error=fatal details={}", format_error_chain(&error));
         std::process::exit(1);
     }
 }

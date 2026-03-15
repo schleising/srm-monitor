@@ -6,6 +6,7 @@ use axum::{Router, routing::get};
 use reqwest::Client;
 use serde::Deserialize;
 use srm_common::config::{WebConfig, env_or_manifest_path, load_toml_file};
+use srm_common::format_error_chain;
 
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -29,7 +30,7 @@ struct TelemetryQuery {
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
-        eprintln!("error=fatal details={}", error);
+        eprintln!("error=fatal details={}", format_error_chain(&error));
         std::process::exit(1);
     }
 }
