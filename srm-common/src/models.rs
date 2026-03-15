@@ -2,7 +2,11 @@ use anyhow::{Context, Result, anyhow};
 use bson::{DateTime as BsonDateTime, oid::ObjectId};
 use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
-use mongodb::{Collection, IndexModel, options::IndexOptions};
+use mongodb::{
+    Collection, IndexModel,
+    error::{CommandError, Error as MongoError, ErrorKind},
+    options::IndexOptions,
+};
 use serde::{Deserialize, Serialize};
 
 pub const TELEMETRY_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
@@ -82,13 +86,14 @@ impl TryFrom<MongoTelemetryRecord> for TelemetrySample {
 pub async fn ensure_telemetry_indexes(collection: &Collection<MongoTelemetryRecord>) -> Result<()> {
     let desired_key = bson::doc! { "timestamp_utc": 1 };
     let desired_expire_after = std::time::Duration::from_secs(TELEMETRY_RETENTION_SECS);
-    let existing_indexes: Vec<IndexModel> = collection
-        .list_indexes()
-        .await
-        .context("failed to list telemetry indexes")?
-        .try_collect()
-        .await
-        .context("failed to read telemetry indexes")?;
+    let existing_indexes: Vec<IndexModel> = match collection.list_indexes().await {
+        Ok(indexes) => indexes
+            .try_collect()
+            .await
+            .context("failed to read telemetry indexes")?,
+        Err(error) if is_namespace_not_found(&error) => Vec::new(),
+        Err(error) => return Err(error).context("failed to list telemetry indexes"),
+    };
     let mut has_desired_index = false;
 
     for index in existing_indexes {
@@ -142,10 +147,19 @@ pub async fn ensure_telemetry_indexes(collection: &Collection<MongoTelemetryReco
     Ok(())
 }
 
+fn is_namespace_not_found(error: &MongoError) -> bool {
+    matches!(
+        error.kind.as_ref(),
+        ErrorKind::Command(CommandError { code: 26, .. })
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bson::DateTime as BsonDateTime;
+    use mongodb::error::{CommandError, Error as MongoError, ErrorKind};
+    use serde_json::json;
 
     #[test]
     fn telemetry_sample_round_trips_through_mongo_record() {
@@ -180,5 +194,18 @@ mod tests {
     #[test]
     fn telemetry_retention_constant_matches_one_week() {
         assert_eq!(TELEMETRY_RETENTION_SECS, 7 * 24 * 60 * 60);
+    }
+
+    #[test]
+    fn namespace_not_found_error_is_detected() {
+        let command_error: CommandError = serde_json::from_value(json!({
+            "code": 26,
+            "codeName": "NamespaceNotFound",
+            "errmsg": "ns does not exist: srm.telemetry"
+        }))
+        .unwrap();
+        let error = MongoError::from(ErrorKind::Command(command_error));
+
+        assert!(is_namespace_not_found(&error));
     }
 }
