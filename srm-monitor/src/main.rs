@@ -158,8 +158,8 @@ fn fetch_samples(
 ) -> Result<Vec<TelemetrySample>> {
     let url = format!("{}/telemetry", base_url.trim_end_matches('/'));
     let mut response = ureq::get(&url)
-        .query("start", &start.to_rfc3339())
-        .query("end", &end.to_rfc3339())
+        .query("start", start.to_rfc3339())
+        .query("end", end.to_rfc3339())
         .call()?;
 
     Ok(response.body_mut().read_json()?)

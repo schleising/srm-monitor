@@ -79,9 +79,7 @@ impl TryFrom<MongoTelemetryRecord> for TelemetrySample {
     }
 }
 
-pub async fn ensure_telemetry_indexes(
-    collection: &Collection<MongoTelemetryRecord>,
-) -> Result<()> {
+pub async fn ensure_telemetry_indexes(collection: &Collection<MongoTelemetryRecord>) -> Result<()> {
     let desired_key = bson::doc! { "timestamp_utc": 1 };
     let desired_expire_after = std::time::Duration::from_secs(TELEMETRY_RETENTION_SECS);
     let existing_indexes: Vec<IndexModel> = collection
@@ -98,8 +96,14 @@ pub async fn ensure_telemetry_indexes(
             continue;
         }
 
-        let index_name = index.options.as_ref().and_then(|options| options.name.as_deref());
-        let expire_after = index.options.as_ref().and_then(|options| options.expire_after);
+        let index_name = index
+            .options
+            .as_ref()
+            .and_then(|options| options.name.as_deref());
+        let expire_after = index
+            .options
+            .as_ref()
+            .and_then(|options| options.expire_after);
 
         if index_name == Some(TELEMETRY_TIMESTAMP_INDEX_NAME)
             && expire_after == Some(desired_expire_after)
@@ -148,7 +152,8 @@ mod tests {
         let timestamp = DateTime::parse_from_rfc3339("2026-03-15T18:44:12+00:00")
             .unwrap()
             .with_timezone(&Utc);
-        let sample = TelemetrySample::new(timestamp, "5G-1".to_string(), 78, 800_000_000, 720_000_000);
+        let sample =
+            TelemetrySample::new(timestamp, "5G-1".to_string(), 78, 800_000_000, 720_000_000);
 
         let record = MongoTelemetryRecord::from(&sample);
         let recovered = TelemetrySample::try_from(record).unwrap();

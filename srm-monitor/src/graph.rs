@@ -342,22 +342,14 @@ impl eframe::App for MonitorGraphApp {
                     plot_ui.line(
                         Line::new(
                             "Rx",
-                            self.visible_points(
-                                &self.rx_series,
-                                bounds.min()[0],
-                                bounds.max()[0],
-                            ),
+                            self.visible_points(&self.rx_series, bounds.min()[0], bounds.max()[0]),
                         )
                         .color(egui::Color32::from_rgb(34, 139, 230)),
                     );
                     plot_ui.line(
                         Line::new(
                             "Tx",
-                            self.visible_points(
-                                &self.tx_series,
-                                bounds.min()[0],
-                                bounds.max()[0],
-                            ),
+                            self.visible_points(&self.tx_series, bounds.min()[0], bounds.max()[0]),
                         )
                         .color(egui::Color32::from_rgb(231, 111, 81)),
                     );

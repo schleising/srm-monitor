@@ -145,7 +145,9 @@ mod tests {
     use tower::util::ServiceExt;
 
     async fn test_state() -> AppState {
-        let client = Client::with_uri_str("mongodb://127.0.0.1:27017").await.unwrap();
+        let client = Client::with_uri_str("mongodb://127.0.0.1:27017")
+            .await
+            .unwrap();
         let collection = client
             .database("test")
             .collection::<MongoTelemetryRecord>("telemetry");
@@ -172,7 +174,9 @@ mod tests {
     async fn api_error_into_response_preserves_status_and_message() {
         let response = ApiError::bad_request("bad input").into_response();
         let status = response.status();
-        let body = body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(std::str::from_utf8(&body).unwrap(), "bad input");
@@ -191,12 +195,16 @@ mod tests {
             .await
             .unwrap();
         let status = response.status();
-        let body = body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(std::str::from_utf8(&body)
-            .unwrap()
-            .contains("invalid RFC3339 timestamp"));
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains("invalid RFC3339 timestamp")
+        );
     }
 
     #[tokio::test]
@@ -212,9 +220,14 @@ mod tests {
             .await
             .unwrap();
         let status = response.status();
-        let body = body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(std::str::from_utf8(&body).unwrap(), "start must be before end");
+        assert_eq!(
+            std::str::from_utf8(&body).unwrap(),
+            "start must be before end"
+        );
     }
 }
