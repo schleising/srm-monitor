@@ -21,5 +21,5 @@ COPY --from=builder /workspace/target/release/srm-web-ui /usr/local/bin/srm-web-
 COPY docker/entrypoint-web-ui.sh /usr/local/bin/entrypoint-web-ui.sh
 RUN chmod +x /usr/local/bin/entrypoint-web-ui.sh
 
-EXPOSE 6000
+EXPOSE 6080
 ENTRYPOINT ["/usr/local/bin/entrypoint-web-ui.sh"]
