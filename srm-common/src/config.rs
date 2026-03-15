@@ -140,7 +140,7 @@ fn default_web_api_base_url() -> String {
 }
 
 fn default_history_window_secs() -> u64 {
-    300
+    12 * 60 * 60
 }
 
 #[cfg(test)]

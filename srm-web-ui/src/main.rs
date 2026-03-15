@@ -182,12 +182,25 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
       </article>
     </section>
 
+    <section class="toolbar">
+      <div class="range-card">
+        <label class="range-label" for="history-window">History window</label>
+        <select id="history-window" class="range-select" aria-label="Select displayed history window">
+          <option value="300000">5 minutes</option>
+          <option value="3600000">1 hour</option>
+          <option value="43200000">12 hours</option>
+          <option value="86400000">1 day</option>
+          <option value="604800000">1 week</option>
+        </select>
+      </div>
+    </section>
+
     <section class="charts">
       <article class="chart-card">
         <div class="chart-header">
           <div>
             <p class="chart-title">Throughput</p>
-            <p class="chart-subtitle">Rx and Tx over the last five minutes</p>
+            <p class="chart-subtitle" id="throughput-subtitle">Rx and Tx over the last 12 hours</p>
           </div>
         </div>
         <div class="chart-frame">
@@ -199,7 +212,7 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
         <div class="chart-header">
           <div>
             <p class="chart-title">Signal Strength</p>
-            <p class="chart-subtitle">Percentage over the last five minutes</p>
+            <p class="chart-subtitle" id="signal-subtitle">Percentage over the last 12 hours</p>
           </div>
         </div>
         <div class="chart-frame">
@@ -302,8 +315,43 @@ h1 {
   gap: 14px;
   margin-bottom: 18px;
 }
+.toolbar {
+  margin-bottom: 18px;
+}
 .metric-card {
   padding: 18px 20px;
+}
+.range-card {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 18px;
+  background: var(--panel);
+  border: 1px solid rgba(255,255,255,0.6);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+.range-label {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.range-select {
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--ink);
+  font: inherit;
+  padding: 10px 16px;
+  min-width: 160px;
+}
+.range-select:focus {
+  outline: 2px solid rgba(33, 118, 201, 0.35);
+  outline-offset: 2px;
 }
 .metric-card strong {
   display: block;
@@ -365,13 +413,22 @@ svg {
 @media (max-width: 640px) {
   .shell { padding: 16px; }
   .metrics { grid-template-columns: 1fr; }
+  .range-card { width: 100%; }
+  .range-select { width: 100%; }
   .chart-card { padding: 14px; }
   .chart-frame, svg { min-height: 260px; height: 260px; }
 }
 "##;
 
 const APP_JS_TEMPLATE: &str = r##"const refreshIntervalMs = __REFRESH_INTERVAL_MS__;
-const historyWindowMs = __HISTORY_WINDOW_MS__;
+const defaultHistoryWindowMs = __HISTORY_WINDOW_MS__;
+const historyWindowOptions = [
+  { valueMs: 5 * 60 * 1000, label: '5 minutes' },
+  { valueMs: 60 * 60 * 1000, label: '1 hour' },
+  { valueMs: 12 * 60 * 60 * 1000, label: '12 hours' },
+  { valueMs: 24 * 60 * 60 * 1000, label: '1 day' },
+  { valueMs: 7 * 24 * 60 * 60 * 1000, label: '1 week' },
+];
 
 const dom = {
   band: document.getElementById('band-value'),
@@ -379,16 +436,40 @@ const dom = {
   signal: document.getElementById('signal-value'),
   rx: document.getElementById('rx-value'),
   tx: document.getElementById('tx-value'),
+  historyWindow: document.getElementById('history-window'),
+  throughputSubtitle: document.getElementById('throughput-subtitle'),
+  signalSubtitle: document.getElementById('signal-subtitle'),
   throughput: document.getElementById('throughput-chart'),
   signalChart: document.getElementById('signal-chart'),
 };
 
 const throughputMax = 2000;
 const signalMax = 105;
+let selectedHistoryWindowMs = normalizeHistoryWindow(defaultHistoryWindowMs);
+
+function normalizeHistoryWindow(windowMs) {
+  const match = historyWindowOptions.find(option => option.valueMs === windowMs);
+  return match ? match.valueMs : 12 * 60 * 60 * 1000;
+}
+
+function selectedHistoryWindow() {
+  return historyWindowOptions.find(option => option.valueMs === selectedHistoryWindowMs)
+    ?? historyWindowOptions[2];
+}
+
+function syncHistoryWindowControl() {
+  dom.historyWindow.value = String(selectedHistoryWindowMs);
+}
+
+function updateRangeCopy() {
+  const option = selectedHistoryWindow();
+  dom.throughputSubtitle.textContent = `Rx and Tx over the last ${option.label.toLowerCase()}`;
+  dom.signalSubtitle.textContent = `Percentage over the last ${option.label.toLowerCase()}`;
+}
 
 async function fetchTelemetry() {
   const end = new Date();
-  const start = new Date(end.getTime() - historyWindowMs);
+  const start = new Date(end.getTime() - selectedHistoryWindowMs);
   const params = new URLSearchParams({ start: start.toISOString(), end: end.toISOString() });
   const response = await fetch(`/api/telemetry?${params.toString()}`);
   if (!response.ok) {
@@ -459,6 +540,30 @@ function buildGrid(yMax, width = 800, height = 320) {
   return markup;
 }
 
+function formatAxisTime(timestamp) {
+  if (selectedHistoryWindowMs > 24 * 60 * 60 * 1000) {
+    return new Intl.DateTimeFormat([], {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    }).format(timestamp);
+  }
+
+  if (selectedHistoryWindowMs > 12 * 60 * 60 * 1000) {
+    return new Intl.DateTimeFormat([], {
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(timestamp);
+  }
+
+  return new Intl.DateTimeFormat([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(timestamp);
+}
+
 function buildTimeLabels(samples, width = 800, height = 320) {
   if (samples.length === 0) return '';
   const padding = { top: 18, right: 18, bottom: 34, left: 52 };
@@ -472,7 +577,7 @@ function buildTimeLabels(samples, width = 800, height = 320) {
     const ratio = index / labels;
     const x = padding.left + ratio * plotWidth;
     const timestamp = new Date(minX + ratio * (safeMaxX - minX));
-    markup += `<text class="chart-axis-label" x="${x}" y="${height - 10}" text-anchor="middle">${new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit' }).format(timestamp)}</text>`;
+    markup += `<text class="chart-axis-label" x="${x}" y="${height - 10}" text-anchor="middle">${formatAxisTime(timestamp)}</text>`;
   }
   return markup;
 }
@@ -514,6 +619,15 @@ async function refresh() {
   }
 }
 
+dom.historyWindow.addEventListener('change', async event => {
+  selectedHistoryWindowMs = normalizeHistoryWindow(Number(event.target.value));
+  syncHistoryWindowControl();
+  updateRangeCopy();
+  await refresh();
+});
+
+syncHistoryWindowControl();
+updateRangeCopy();
 refresh();
 setInterval(refresh, refreshIntervalMs);
 "##;

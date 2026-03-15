@@ -114,6 +114,7 @@ cargo run -p srm-graph-gui
 ```
 
 The browser dashboard proxies `/api/telemetry` to the API and is designed to work cleanly on both desktop and mobile layouts.
+It defaults to a 12-hour history window in the browser and lets the user switch between 5 minutes, 1 hour, 12 hours, 1 day, and 1 week.
 The native GUI queries `/telemetry` with RFC3339 `start` and `end` parameters and renders the JSON response.
 
 ## Development
