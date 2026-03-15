@@ -10,3 +10,7 @@ reqwest.workspace = true
 serde.workspace = true
 tokio.workspace = true
 srm-common = { path = "../srm-common" }
+
+[dev-dependencies]
+serde_json.workspace = true
+tower = { version = "0.5", features = ["util"] }

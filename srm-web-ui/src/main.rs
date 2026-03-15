@@ -43,25 +43,33 @@ async fn run() -> Result<()> {
     );
     let config: WebConfig = load_toml_file(&config_path)?;
 
-    let state = AppState {
-        http_client: Client::new(),
-        api_base_url: config.api.base_url.trim_end_matches('/').to_string(),
-        refresh_interval_secs: config.api.refresh_interval_secs.max(1),
-        history_window_secs: config.api.history_window_secs.max(60),
-    };
+    let bind_address = config.server.bind_address.clone();
+    let state = build_state(config);
+    let app = build_app(state);
 
-    let app = Router::new()
-        .route("/", get(index))
-        .route("/app.js", get(app_js))
-        .route("/styles.css", get(styles_css))
-        .route("/api/telemetry", get(proxy_telemetry))
-        .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind(&config.server.bind_address).await?;
-    println!("listening=http://{}", config.server.bind_address);
+    let listener = tokio::net::TcpListener::bind(&bind_address).await?;
+    println!("listening=http://{}", bind_address);
     axum::serve(listener, app).await?;
     Ok(())
 }
+
+  fn build_state(config: WebConfig) -> AppState {
+    AppState {
+      http_client: Client::new(),
+      api_base_url: config.api.base_url.trim_end_matches('/').to_string(),
+      refresh_interval_secs: config.api.refresh_interval_secs.max(1),
+      history_window_secs: config.api.history_window_secs.max(60),
+    }
+  }
+
+  fn build_app(state: AppState) -> Router {
+    Router::new()
+      .route("/", get(index))
+      .route("/app.js", get(app_js))
+      .route("/styles.css", get(styles_css))
+      .route("/api/telemetry", get(proxy_telemetry))
+      .with_state(state)
+  }
 
 async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
@@ -142,6 +150,165 @@ impl IntoResponse for ProxyError {
     fn into_response(self) -> Response {
         (self.status, self.message).into_response()
     }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use axum::Json;
+  use axum::body;
+  use axum::body::Body;
+  use axum::http::Request;
+  use serde_json::Value;
+  use std::net::SocketAddr;
+  use tower::util::ServiceExt;
+
+  fn test_config(base_url: &str, refresh_interval_secs: u64, history_window_secs: u64) -> WebConfig {
+    WebConfig {
+      server: srm_common::config::WebServerSettings {
+        bind_address: "127.0.0.1:6080".to_string(),
+      },
+      api: srm_common::config::WebApiSettings {
+        base_url: base_url.to_string(),
+        refresh_interval_secs,
+        history_window_secs,
+      },
+    }
+  }
+
+  async fn spawn_upstream(status: StatusCode) -> SocketAddr {
+    let app = Router::new().route(
+      "/telemetry",
+      get(move || async move {
+        let sample = serde_json::json!([{
+          "timestamp_utc": "2026-03-15T18:44:12Z",
+          "band": "5G-1",
+          "signal_strength": 78,
+          "rx_bps": 800000000,
+          "tx_bps": 720000000
+        }]);
+        (status, Json(sample))
+      }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+      axum::serve(listener, app).await.unwrap();
+    });
+
+    address
+  }
+
+  #[test]
+  fn rendered_app_js_injects_refresh_and_history_defaults() {
+    let script = render_app_js(30, 12 * 60 * 60);
+
+    assert!(script.contains("const refreshIntervalMs = 30000;"));
+    assert!(script.contains("const defaultHistoryWindowMs = 43200000;"));
+  }
+
+  #[test]
+  fn rendered_app_js_contains_all_history_window_options() {
+    let script = render_app_js(30, 12 * 60 * 60);
+
+    for label in ["5 minutes", "1 hour", "12 hours", "1 day", "1 week"] {
+      assert!(script.contains(label), "missing option {label}");
+    }
+  }
+
+  #[test]
+  fn rendered_app_js_defaults_unknown_history_window_to_twelve_hours() {
+    let script = render_app_js(30, 42);
+
+    assert!(script.contains("return match ? match.valueMs : 12 * 60 * 60 * 1000;"));
+  }
+
+  #[test]
+  fn index_html_exposes_history_window_selector_and_default_copy() {
+    assert!(INDEX_HTML.contains("id=\"history-window\""));
+    assert!(INDEX_HTML.contains("Rx and Tx over the last 12 hours"));
+    assert!(INDEX_HTML.contains("Percentage over the last 12 hours"));
+  }
+
+  #[test]
+  fn build_state_trims_base_url_and_clamps_intervals() {
+    let state = build_state(test_config("http://127.0.0.1:6081/", 0, 1));
+
+    assert_eq!(state.api_base_url, "http://127.0.0.1:6081");
+    assert_eq!(state.refresh_interval_secs, 1);
+    assert_eq!(state.history_window_secs, 60);
+  }
+
+  #[tokio::test]
+  async fn index_route_serves_html() {
+    let app = build_app(build_state(test_config("http://127.0.0.1:6081", 30, 43200)));
+    let response = app
+      .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+      .await
+      .unwrap();
+    let status = response.status();
+    let body = body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(std::str::from_utf8(&body).unwrap().contains("History window"));
+  }
+
+  #[tokio::test]
+  async fn app_js_route_uses_configured_history_window() {
+    let app = build_app(build_state(test_config("http://127.0.0.1:6081", 30, 43200)));
+    let response = app
+      .oneshot(Request::builder().uri("/app.js").body(Body::empty()).unwrap())
+      .await
+      .unwrap();
+    let body = body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let script = std::str::from_utf8(&body).unwrap();
+
+    assert!(script.contains("const defaultHistoryWindowMs = 43200000;"));
+  }
+
+  #[tokio::test]
+  async fn proxy_route_forwards_upstream_json() {
+    let upstream = spawn_upstream(StatusCode::OK).await;
+    let app = build_app(build_state(test_config(&format!("http://{upstream}"), 30, 43200)));
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/api/telemetry?start=2026-03-15T18:00:00Z&end=2026-03-15T19:00:00Z")
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+      headers.get(header::CONTENT_TYPE).unwrap(),
+      "application/json; charset=utf-8"
+    );
+    assert!(payload.as_array().is_some_and(|items| items.len() == 1));
+  }
+
+  #[tokio::test]
+  async fn proxy_route_preserves_upstream_error_status() {
+    let upstream = spawn_upstream(StatusCode::BAD_GATEWAY).await;
+    let app = build_app(build_state(test_config(&format!("http://{upstream}"), 30, 43200)));
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/api/telemetry?start=2026-03-15T18:00:00Z&end=2026-03-15T19:00:00Z")
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+  }
 }
 
 const INDEX_HTML: &str = r##"<!DOCTYPE html>

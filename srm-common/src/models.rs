@@ -137,3 +137,43 @@ pub async fn ensure_telemetry_indexes(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bson::DateTime as BsonDateTime;
+
+    #[test]
+    fn telemetry_sample_round_trips_through_mongo_record() {
+        let timestamp = DateTime::parse_from_rfc3339("2026-03-15T18:44:12+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let sample = TelemetrySample::new(timestamp, "5G-1".to_string(), 78, 800_000_000, 720_000_000);
+
+        let record = MongoTelemetryRecord::from(&sample);
+        let recovered = TelemetrySample::try_from(record).unwrap();
+
+        assert_eq!(recovered, sample);
+    }
+
+    #[test]
+    fn invalid_bson_timestamp_is_rejected() {
+        let record = MongoTelemetryRecord {
+            id: None,
+            timestamp_utc: BsonDateTime::from_millis(i64::MAX),
+            band: "5G-1".to_string(),
+            signal_strength: 78,
+            rx_bps: 800_000_000,
+            tx_bps: 720_000_000,
+        };
+
+        let error = TelemetrySample::try_from(record).unwrap_err();
+
+        assert!(error.to_string().contains("invalid BSON timestamp"));
+    }
+
+    #[test]
+    fn telemetry_retention_constant_matches_one_week() {
+        assert_eq!(TELEMETRY_RETENTION_SECS, 7 * 24 * 60 * 60);
+    }
+}

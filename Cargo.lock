@@ -3331,6 +3331,7 @@ dependencies = [
  "serde",
  "srm-common",
  "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -3366,8 +3367,10 @@ dependencies = [
  "axum",
  "reqwest",
  "serde",
+ "serde_json",
  "srm-common",
  "tokio",
+ "tower",
 ]
 
 [[package]]

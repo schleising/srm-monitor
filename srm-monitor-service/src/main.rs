@@ -125,3 +125,23 @@ fn format_bps(rate_bps: u64) -> String {
         format!("{:.3} {}", value, units[unit_index])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_bps_keeps_small_values_in_bps() {
+        assert_eq!(format_bps(999), "999 bps");
+    }
+
+    #[test]
+    fn format_bps_formats_kilobits() {
+        assert_eq!(format_bps(1_500), "1.500 Kbps");
+    }
+
+    #[test]
+    fn format_bps_formats_megabits() {
+        assert_eq!(format_bps(800_000_000), "800.000 Mbps");
+    }
+}

@@ -146,6 +146,12 @@ fn default_history_window_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct Wrapper<T> {
+        api: T,
+    }
 
     #[test]
     fn uses_manifest_relative_default_when_env_not_set() {
@@ -172,5 +178,33 @@ mod tests {
         unsafe {
             std::env::remove_var(env_name);
         }
+    }
+
+    #[test]
+    fn web_config_defaults_to_twelve_hour_history_window() {
+        let config: Wrapper<WebApiSettings> = toml::from_str(
+            r#"
+            [api]
+            base_url = "http://127.0.0.1:6081"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.api.refresh_interval_secs, 30);
+        assert_eq!(config.api.history_window_secs, 12 * 60 * 60);
+    }
+
+    #[test]
+    fn gui_config_defaults_to_thirty_second_refresh() {
+        let config: Wrapper<ApiClientSettings> = toml::from_str(
+            r#"
+            [api]
+            base_url = "http://127.0.0.1:6081"
+            history_start = "1970-01-01T00:00:00Z"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.api.refresh_interval_secs, 30);
     }
 }
