@@ -7,7 +7,7 @@ escape_toml_string() {
 
 mkdir -p /app/config
 
-bind_address=$(escape_toml_string "${SRM_API_BIND_ADDRESS:-0.0.0.0:8080}")
+bind_address=$(escape_toml_string "${SRM_API_BIND_ADDRESS:-0.0.0.0:6081}")
 mongodb_url=$(escape_toml_string "${SRM_MONGODB_URL:-mongodb://mongodb:27017}")
 mongodb_database=$(escape_toml_string "${SRM_MONGODB_DATABASE:-srm}")
 mongodb_collection=$(escape_toml_string "${SRM_MONGODB_COLLECTION:-telemetry}")

@@ -50,10 +50,12 @@ For the GUI, `history_start` is the oldest timestamp the client will request fro
 
 ## Docker Compose
 
-The repository includes [docker-compose.yml](docker-compose.yml) to start MongoDB, the monitor service, and the data API together.
-The compose stack also includes `srm-web-ui`, which serves the browser dashboard on port `6080`.
+The repository includes [docker-compose.yml](docker-compose.yml) to start MongoDB, the monitor service, the data API, and `srm-web-ui` together.
 
-Create a local `.env` from [.env.example](.env.example) and fill in the Synology credentials before starting the stack.
+For backend plus browser deployment, the only file you need to edit is a local `.env` copied from [.env.example](.env.example). That file is gitignored and only needs these values:
+
+- `SRM_SYNOLOGY_USERNAME`
+- `SRM_SYNOLOGY_PASSWORD`
 
 To start the backend stack and then launch the native GUI with one command, run:
 
@@ -71,10 +73,18 @@ The launcher will:
 
 By default, when the GUI exits, the launcher also stops the compose stack. Pass `--keep-backend` if you want the containers left running after the GUI closes.
 
-Start the stack:
+Deploy or refresh the stack after a `git pull`:
 
 ```bash
-docker compose up --build -d
+cp .env.example .env
+docker compose up -d
+```
+
+After the first copy, later updates only need:
+
+```bash
+git pull
+docker compose up -d
 ```
 
 Stop the stack:
