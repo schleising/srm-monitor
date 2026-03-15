@@ -24,7 +24,12 @@ srm-monitor/
 
 ## Configuration
 
-Each runnable application reads a TOML config file from its own `config/` folder. Example files are committed, while the real `.toml` files are gitignored.
+There are two distinct config flows in this repository:
+
+- Local native runs with `cargo run -p ...` use crate-local TOML files under each app's `config/` directory.
+- Docker deployment does not use those local TOML files. The Compose stack is driven from the repo-root `.env`, and each container writes its own in-container config file at startup.
+
+Example TOML files are committed for local native runs, while the real local `.toml` files are gitignored.
 
 - `srm-monitor-service/config/service.example.toml`
 - `srm-data-api/config/api.example.toml`
@@ -51,6 +56,16 @@ For the GUI, `history_start` is the oldest timestamp the client will request fro
 ## Docker Compose
 
 The repository includes [docker-compose.yml](docker-compose.yml) to start MongoDB, the monitor service, the data API, and `srm-web-ui` together.
+
+For Docker deployment, you do not need to create or edit any of the crate-local `config/*.toml` files. The intended deployment flow is:
+
+```bash
+git clone <repo>
+cd srm-monitor
+cp .env.example .env
+# edit .env
+docker compose up -d
+```
 
 For backend plus browser deployment, the only file you need to edit is a local `.env` copied from [.env.example](.env.example). That file is gitignored and only needs these values:
 

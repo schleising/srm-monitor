@@ -20,6 +20,9 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# Local non-Docker runtime config files for `cargo run` and the native GUI launcher.
+# Docker Compose does not need these; container entrypoints generate in-container
+# config from environment variables and the repo-root `.env` file.
 srm-monitor/config/gui.toml
 srm-monitor-service/config/service.toml
 srm-data-api/config/api.toml
