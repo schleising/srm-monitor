@@ -12,6 +12,35 @@ Workspace for three independent SRM telemetry applications backed by a shared Ru
 
 Each runnable application can compile and run independently.
 
+## Component Diagram
+
+```mermaid
+flowchart TD
+	synology[Synology SRM]
+	browser[Browser]
+	gui[Native GUI<br/>srm-graph-gui]
+	common[srm-common]
+
+	subgraph compose[Docker Compose Deployment]
+		monitor[srm-monitor-service]
+		mongo[(MongoDB)]
+		api[srm-data-api]
+		web[srm-web-ui]
+	end
+
+	synology -->|poll telemetry| monitor
+	monitor -->|write samples| mongo
+	mongo -->|query time ranges| api
+	api -->|JSON telemetry| web
+	web -->|HTML/CSS/JS + proxied /api/telemetry| browser
+	api -->|HTTP /telemetry| gui
+
+	common -.->|shared config, models, Synology client| monitor
+	common -. shared config + telemetry models .-> api
+	common -. shared config .-> web
+	common -. shared config + telemetry models .-> gui
+```
+
 ## Layout
 
 ```text
