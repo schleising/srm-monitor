@@ -7,9 +7,9 @@ use signal_hook::flag;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::str::FromStr;
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Duration;
 
@@ -518,7 +518,10 @@ mod tests {
     fn shutdown_signal_name_maps_known_signals() {
         assert_eq!(shutdown_signal_name(SIGINT as usize), "SIGINT");
         assert_eq!(shutdown_signal_name(SIGTERM as usize), "SIGTERM");
-        assert_eq!(shutdown_signal_name(APPLICATION_CLOSE_SIGNAL), "WINDOW_CLOSE");
+        assert_eq!(
+            shutdown_signal_name(APPLICATION_CLOSE_SIGNAL),
+            "WINDOW_CLOSE"
+        );
         assert_eq!(shutdown_signal_name(999), "UNKNOWN");
     }
 
