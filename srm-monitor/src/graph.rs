@@ -16,6 +16,13 @@ const CSV_FILE_PATH: &str = "avg_rates.csv";
 const PLOT_LINK_GROUP: &str = "telemetry-time";
 const ROLLING_WINDOW_SECS: f64 = 5.0 * 60.0;
 const REPAINT_INTERVAL: Duration = Duration::from_millis(250);
+const THROUGHPUT_MIN_MBPS: f64 = 0.0;
+const THROUGHPUT_MAX_MBPS: f64 = 2000.0;
+const SIGNAL_MIN_PERCENT: f64 = 0.0;
+const SIGNAL_MAX_PERCENT: f64 = 105.0;
+const MIN_PLOT_HEIGHT: f32 = 160.0;
+const PLOT_LABEL_OVERHEAD: f32 = 44.0;
+const INTER_PLOT_SPACING: f32 = 12.0;
 
 pub fn run_monitor_window(
     app_name: &str,
@@ -119,7 +126,7 @@ impl MonitorGraphApp {
         }))
     }
 
-    fn time_bounds(&self, current_bounds: PlotBounds) -> Option<PlotBounds> {
+    fn latest_x_bounds(&self, current_bounds: PlotBounds) -> Option<(f64, f64)> {
         let first = self.samples.front()?;
         let latest = self.samples.back()?;
 
@@ -131,10 +138,13 @@ impl MonitorGraphApp {
             first_ts
         };
 
-        Some(PlotBounds::from_min_max(
-            [min_x, current_bounds.min()[1]],
-            [latest_ts, current_bounds.max()[1]],
-        ))
+        let max_x = if latest_ts > min_x {
+            latest_ts
+        } else {
+            min_x + current_bounds.width().max(1.0)
+        };
+
+        Some((min_x, max_x))
     }
 
     fn render_plot_controls(&mut self, ui: &mut egui::Ui) {
@@ -151,30 +161,41 @@ impl MonitorGraphApp {
         Plot::new(id)
             .legend(Legend::default())
             .link_axis(PLOT_LINK_GROUP, [true, false])
-            .allow_drag([true, true])
-            .allow_scroll([true, true])
-            .allow_zoom([true, true])
-            .auto_bounds(Vec2b::new(false, true))
+            .allow_drag([true, false])
+            .allow_scroll([true, false])
+            .allow_zoom([true, false])
+            .auto_bounds(Vec2b::new(false, false))
             .x_axis_formatter(format_time_axis)
             .label_formatter(move |name, value| format_plot_label(name, value.x, value.y, y_label))
     }
 
-    fn maybe_follow_latest(&mut self, plot_ui: &mut egui_plot::PlotUi<'_>) {
-        if !self.follow_latest {
-            return;
-        }
+    fn apply_plot_bounds(
+        &mut self,
+        plot_ui: &mut egui_plot::PlotUi<'_>,
+        min_y: f64,
+        max_y: f64,
+    ) {
+        let current_bounds = plot_ui.plot_bounds();
+        let (min_x, max_x) = if self.follow_latest {
+            self.latest_x_bounds(current_bounds)
+                .unwrap_or((current_bounds.min()[0], current_bounds.max()[0]))
+        } else {
+            (current_bounds.min()[0], current_bounds.max()[0])
+        };
 
-        if let Some(bounds) = self.time_bounds(plot_ui.plot_bounds()) {
-            plot_ui.set_plot_bounds(bounds);
-            plot_ui.set_auto_bounds(Vec2b::new(false, true));
-        }
+        plot_ui.set_plot_bounds(PlotBounds::from_min_max([min_x, min_y], [max_x, max_y]));
+        plot_ui.set_auto_bounds(Vec2b::new(false, false));
     }
 
-    fn sync_follow_mode(&mut self, response: &egui::Response) {
+    fn sync_follow_mode(&mut self, ctx: &egui::Context, response: &egui::Response) {
         if response.dragged() {
             self.follow_latest = false;
         }
-        if response.clicked() {
+        let x_scrolled = ctx.input(|input| {
+            response.hovered() && (input.raw_scroll_delta.x != 0.0 || input.raw_scroll_delta.y != 0.0)
+        });
+        let zoomed = ctx.input(|input| response.hovered() && (input.zoom_delta() - 1.0).abs() > f32::EPSILON);
+        if x_scrolled || zoomed {
             self.follow_latest = false;
         }
     }
@@ -203,7 +224,7 @@ impl eframe::App for MonitorGraphApp {
             if let Some(sample) = self.latest_sample() {
                 ui.horizontal_wrapped(|ui| {
                     ui.strong(format!("Current band: {}", sample.band));
-                    ui.label(format!("Signal: {} dBm", sample.signal_strength));
+                    ui.label(format!("Signal: {}%", sample.signal_strength));
                     ui.label(format!("Rx: {:.3} Mbps", sample.rx_bps as f64 / 1_000_000.0));
                     ui.label(format!("Tx: {:.3} Mbps", sample.tx_bps as f64 / 1_000_000.0));
                     ui.label(format!("Updated: {}", Self::local_timestamp(sample)));
@@ -219,12 +240,18 @@ impl eframe::App for MonitorGraphApp {
             ui.add_space(8.0);
             self.render_plot_controls(ui);
             ui.add_space(6.0);
+
+            let remaining_height = ui.available_height();
+            let plot_height = ((remaining_height - INTER_PLOT_SPACING - PLOT_LABEL_OVERHEAD)
+                / 2.0)
+                .max(MIN_PLOT_HEIGHT);
+
             ui.label("Throughput history in Mbps. The x-axis shows local wall clock time.");
             let throughput_plot = self
                 .build_plot("throughput-plot", "Mbps")
-                .height(280.0)
+                .height(plot_height)
                 .show(ui, |plot_ui| {
-                    self.maybe_follow_latest(plot_ui);
+                    self.apply_plot_bounds(plot_ui, THROUGHPUT_MIN_MBPS, THROUGHPUT_MAX_MBPS);
                     plot_ui.line(
                         Line::new(self.throughput_points(|sample| sample.rx_bps))
                             .name("Rx")
@@ -236,22 +263,22 @@ impl eframe::App for MonitorGraphApp {
                             .color(egui::Color32::from_rgb(231, 111, 81)),
                     );
                 });
-            self.sync_follow_mode(&throughput_plot.response);
+            self.sync_follow_mode(ctx, &throughput_plot.response);
 
-            ui.add_space(12.0);
-            ui.label("Signal strength in dBm.");
+            ui.add_space(INTER_PLOT_SPACING);
+            ui.label("Signal strength as a percentage.");
             let signal_plot = self
-                .build_plot("signal-plot", "dBm")
-                .height(220.0)
+                .build_plot("signal-plot", "%")
+                .height(plot_height)
                 .show(ui, |plot_ui| {
-                    self.maybe_follow_latest(plot_ui);
+                    self.apply_plot_bounds(plot_ui, SIGNAL_MIN_PERCENT, SIGNAL_MAX_PERCENT);
                     plot_ui.line(
                         Line::new(self.signal_points())
                             .name("Signal")
                             .color(egui::Color32::from_rgb(46, 196, 182)),
                     );
                 });
-            self.sync_follow_mode(&signal_plot.response);
+            self.sync_follow_mode(ctx, &signal_plot.response);
         });
     }
 }
