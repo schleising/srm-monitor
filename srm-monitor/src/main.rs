@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, TimeDelta, Utc};
 use srm_common::config::{ApiClientSettings, GuiConfig, env_or_manifest_path, load_toml_file};
 use srm_common::models::TelemetrySample;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::Duration;
 
@@ -12,6 +12,7 @@ const APP_NAME: &str = env!("CARGO_PKG_NAME");
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CONFIG_ENV_VAR: &str = "SRM_GRAPH_GUI_CONFIG";
 const DEFAULT_CONFIG_PATH: &str = "config/gui.toml";
+const INITIAL_HISTORY_WINDOW_SECS: i64 = 5 * 60;
 
 fn run() -> Result<()> {
     let _profiling_session = profiling::init_from_env()?;
@@ -23,9 +24,17 @@ fn run() -> Result<()> {
     );
     let config: GuiConfig = load_toml_file(&config_path)?;
     let (event_sender, event_receiver) = std::sync::mpsc::channel();
+    let (command_sender, command_receiver) = std::sync::mpsc::channel();
+    let history_start = parse_history_start(&config.api.history_start)?;
 
-    spawn_api_poller(config.api, event_sender)?;
-    graph::run_monitor_window(APP_NAME, APP_VERSION, event_receiver)
+    spawn_api_poller(config.api, event_sender, command_receiver, history_start)?;
+    graph::run_monitor_window(
+        APP_NAME,
+        APP_VERSION,
+        event_receiver,
+        command_sender,
+        history_start,
+    )
 }
 
 fn main() {
@@ -35,61 +44,112 @@ fn main() {
     }
 }
 
-fn spawn_api_poller(config: ApiClientSettings, sender: Sender<graph::GraphEvent>) -> Result<()> {
+fn spawn_api_poller(
+    config: ApiClientSettings,
+    sender: Sender<graph::GraphEvent>,
+    command_receiver: Receiver<graph::GraphCommand>,
+    history_start: DateTime<Utc>,
+) -> Result<()> {
     thread::Builder::new()
         .name("srm-api-poller".to_string())
-        .spawn(move || poll_api_loop(config, sender))
+        .spawn(move || poll_api_loop(config, sender, command_receiver, history_start))
         .context("failed to spawn API poller thread")?;
     Ok(())
 }
 
-fn poll_api_loop(config: ApiClientSettings, sender: Sender<graph::GraphEvent>) {
-    let mut next_start = match parse_history_start(&config.history_start) {
-        Ok(timestamp) => timestamp,
-        Err(error) => {
-            let _ = sender.send(graph::GraphEvent::Error(error.to_string()));
-            return;
-        }
-    };
-    let mut replace_history = true;
+fn poll_api_loop(
+    config: ApiClientSettings,
+    sender: Sender<graph::GraphEvent>,
+    command_receiver: Receiver<graph::GraphCommand>,
+    history_start: DateTime<Utc>,
+) {
+    let mut follow_latest = true;
+
+    if load_live_window(&config.base_url, &sender, history_start).is_err() {
+        return;
+    }
 
     loop {
-        let end = Utc::now();
-        match fetch_samples(&config.base_url, next_start, end) {
-            Ok(samples) => {
-                let last_timestamp = samples.last().map(|sample| sample.timestamp_utc);
-
-                if replace_history {
-                    if sender
-                        .send(graph::GraphEvent::ReplaceHistory(samples))
+        if follow_latest {
+            match command_receiver
+                .recv_timeout(Duration::from_secs(config.refresh_interval_secs.max(1)))
+            {
+                Ok(graph::GraphCommand::FollowLatest) => {
+                    if load_live_window(&config.base_url, &sender, history_start).is_err() {
+                        return;
+                    }
+                }
+                Ok(graph::GraphCommand::LoadVisibleRange { start, end }) => {
+                    follow_latest = false;
+                    if load_visible_range(&config.base_url, &sender, history_start, start, end)
                         .is_err()
                     {
-                        break;
+                        return;
                     }
-                    replace_history = false;
-                } else if !samples.is_empty()
-                    && sender
-                        .send(graph::GraphEvent::AppendSamples(samples))
-                        .is_err()
-                {
-                    break;
                 }
-
-                if let Some(timestamp) = last_timestamp {
-                    next_start = timestamp + TimeDelta::milliseconds(1);
+                Err(RecvTimeoutError::Timeout) => {
+                    if load_live_window(&config.base_url, &sender, history_start).is_err() {
+                        return;
+                    }
                 }
+                Err(RecvTimeoutError::Disconnected) => return,
             }
-            Err(error) => {
-                if sender
-                    .send(graph::GraphEvent::Error(error.to_string()))
-                    .is_err()
-                {
-                    break;
+        } else {
+            match command_receiver.recv() {
+                Ok(graph::GraphCommand::FollowLatest) => {
+                    follow_latest = true;
+                    if load_live_window(&config.base_url, &sender, history_start).is_err() {
+                        return;
+                    }
                 }
+                Ok(graph::GraphCommand::LoadVisibleRange { start, end }) => {
+                    if load_visible_range(&config.base_url, &sender, history_start, start, end)
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                Err(_) => return,
             }
         }
+    }
+}
 
-        thread::sleep(Duration::from_secs(config.refresh_interval_secs.max(1)));
+fn load_live_window(
+    base_url: &str,
+    sender: &Sender<graph::GraphEvent>,
+    history_start: DateTime<Utc>,
+) -> Result<()> {
+    let end = Utc::now();
+    let start = initial_history_start(history_start, end);
+    load_range(base_url, sender, start, end)
+}
+
+fn load_visible_range(
+    base_url: &str,
+    sender: &Sender<graph::GraphEvent>,
+    history_start: DateTime<Utc>,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<()> {
+    let now = Utc::now();
+    let (start, end) = normalize_requested_range(history_start, start, end, now);
+    load_range(base_url, sender, start, end)
+}
+
+fn load_range(
+    base_url: &str,
+    sender: &Sender<graph::GraphEvent>,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<()> {
+    match fetch_samples(base_url, start, end) {
+        Ok(samples) => sender
+            .send(graph::GraphEvent::ReplaceHistory(samples))
+            .map_err(|error| anyhow::anyhow!(error.to_string())),
+        Err(error) => sender
+            .send(graph::GraphEvent::Error(error.to_string()))
+            .map_err(|send_error| anyhow::anyhow!(send_error.to_string())),
     }
 }
 
@@ -109,4 +169,81 @@ fn fetch_samples(
 
 fn parse_history_start(value: &str) -> Result<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(value)?.with_timezone(&Utc))
+}
+
+fn initial_history_start(history_start: DateTime<Utc>, now: DateTime<Utc>) -> DateTime<Utc> {
+    let rolling_start = now - TimeDelta::seconds(INITIAL_HISTORY_WINDOW_SECS);
+    if history_start > rolling_start {
+        history_start
+    } else {
+        rolling_start
+    }
+}
+
+fn normalize_requested_range(
+    history_start: DateTime<Utc>,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> (DateTime<Utc>, DateTime<Utc>) {
+    let start = start.max(history_start);
+    let mut end = end.min(now);
+    if end <= start {
+        end = (start + TimeDelta::seconds(1)).min(now);
+    }
+    (start, end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_history_uses_last_five_minutes_when_available() {
+        let now = DateTime::parse_from_rfc3339("2026-03-15T15:10:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let history_start = DateTime::parse_from_rfc3339("2026-03-15T14:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let start = initial_history_start(history_start, now);
+
+        assert_eq!(start, now - TimeDelta::minutes(5));
+    }
+
+    #[test]
+    fn initial_history_respects_configured_floor() {
+        let now = DateTime::parse_from_rfc3339("2026-03-15T15:10:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let history_start = DateTime::parse_from_rfc3339("2026-03-15T15:08:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let start = initial_history_start(history_start, now);
+
+        assert_eq!(start, history_start);
+    }
+
+    #[test]
+    fn normalize_requested_range_clamps_to_history_floor_and_now() {
+        let history_start = DateTime::parse_from_rfc3339("2026-03-15T15:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let now = DateTime::parse_from_rfc3339("2026-03-15T15:10:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let start = DateTime::parse_from_rfc3339("2026-03-15T14:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let end = DateTime::parse_from_rfc3339("2026-03-15T15:20:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let (start, end) = normalize_requested_range(history_start, start, end, now);
+
+        assert_eq!(start, history_start);
+        assert_eq!(end, now);
+    }
 }

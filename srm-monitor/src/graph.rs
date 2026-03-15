@@ -1,13 +1,16 @@
 use crate::profiling;
 use anyhow::Result;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use eframe::egui;
 use egui::Vec2b;
 use egui_plot::{GridMark, Legend, Line, Plot, PlotBounds, PlotPoints};
 use srm_common::models::TelemetrySample;
 use std::collections::VecDeque;
 use std::ops::RangeInclusive;
-use std::sync::{Arc, Mutex, mpsc::Receiver};
+use std::sync::{
+    Arc, Mutex,
+    mpsc::{Receiver, Sender},
+};
 use std::thread;
 
 const PLOT_LINK_GROUP: &str = "telemetry-time";
@@ -26,14 +29,23 @@ type PendingEvents = Arc<Mutex<VecDeque<GraphEvent>>>;
 
 pub enum GraphEvent {
     ReplaceHistory(Vec<TelemetrySample>),
-    AppendSamples(Vec<TelemetrySample>),
     Error(String),
+}
+
+pub enum GraphCommand {
+    FollowLatest,
+    LoadVisibleRange {
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    },
 }
 
 pub fn run_monitor_window(
     app_name: &str,
     app_version: &str,
     receiver: Receiver<GraphEvent>,
+    command_sender: Sender<GraphCommand>,
+    history_start: DateTime<Utc>,
 ) -> Result<()> {
     let window_title = format!("{} {}", app_name, app_version);
     let app_name = app_name.to_string();
@@ -56,6 +68,8 @@ pub fn run_monitor_window(
                 app_name,
                 app_version,
                 receiver,
+                command_sender,
+                history_start,
             )))
         }),
     )?;
@@ -67,12 +81,15 @@ struct MonitorGraphApp {
     app_name: String,
     app_version: String,
     pending_events: PendingEvents,
+    command_sender: Sender<GraphCommand>,
     latest_sample: Option<TelemetrySample>,
     rx_series: Vec<PlotDatum>,
     tx_series: Vec<PlotDatum>,
     signal_series: Vec<PlotDatum>,
     latest_error: Option<String>,
     follow_latest: bool,
+    history_start: DateTime<Utc>,
+    last_requested_range: Option<(f64, f64)>,
 }
 
 impl MonitorGraphApp {
@@ -81,6 +98,8 @@ impl MonitorGraphApp {
         app_name: String,
         app_version: String,
         receiver: Receiver<GraphEvent>,
+        command_sender: Sender<GraphCommand>,
+        history_start: DateTime<Utc>,
     ) -> Self {
         let _profile_scope = profiling::scope("graph.initialize");
         let pending_events = Arc::new(Mutex::new(VecDeque::new()));
@@ -90,12 +109,15 @@ impl MonitorGraphApp {
             app_name,
             app_version,
             pending_events,
+            command_sender,
             latest_sample: None,
             rx_series: Vec::new(),
             tx_series: Vec::new(),
             signal_series: Vec::new(),
             latest_error: None,
             follow_latest: true,
+            history_start,
+            last_requested_range: None,
         }
     }
 
@@ -103,7 +125,6 @@ impl MonitorGraphApp {
         self.rx_series.clear();
         self.tx_series.clear();
         self.signal_series.clear();
-        self.latest_sample = None;
 
         profiling::record_metric(
             "graph.history_samples_loaded",
@@ -123,7 +144,13 @@ impl MonitorGraphApp {
             .push([timestamp, sample.tx_bps as f64 / 1_000_000.0]);
         self.signal_series
             .push([timestamp, sample.signal_strength as f64]);
-        self.latest_sample = Some(sample);
+        if self
+            .latest_sample
+            .as_ref()
+            .is_none_or(|current| sample.timestamp_utc >= current.timestamp_utc)
+        {
+            self.latest_sample = Some(sample);
+        }
         profiling::record_metric("graph.cached_points", self.rx_series.len() as f64, "points");
     }
 
@@ -144,13 +171,6 @@ impl MonitorGraphApp {
             match event {
                 GraphEvent::ReplaceHistory(samples) => {
                     self.replace_history(samples);
-                    self.latest_error = None;
-                    changed = true;
-                }
-                GraphEvent::AppendSamples(samples) => {
-                    for sample in samples {
-                        self.push_sample(sample);
-                    }
                     self.latest_error = None;
                     changed = true;
                 }
@@ -196,9 +216,15 @@ impl MonitorGraphApp {
 
     fn render_plot_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.checkbox(&mut self.follow_latest, "Follow latest 5 minutes");
+            let follow_response = ui.checkbox(&mut self.follow_latest, "Follow latest 5 minutes");
+            if follow_response.changed() && self.follow_latest {
+                self.last_requested_range = None;
+                let _ = self.command_sender.send(GraphCommand::FollowLatest);
+            }
             if ui.button("Jump to latest").clicked() {
                 self.follow_latest = true;
+                self.last_requested_range = None;
+                let _ = self.command_sender.send(GraphCommand::FollowLatest);
             }
             ui.label(
                 "Drag to pan and use the mouse wheel or trackpad to zoom out to older samples.",
@@ -243,6 +269,44 @@ impl MonitorGraphApp {
             .input(|input| response.hovered() && (input.zoom_delta() - 1.0).abs() > f32::EPSILON);
         if x_scrolled || zoomed {
             self.follow_latest = false;
+            self.last_requested_range = None;
+        }
+    }
+
+    fn maybe_request_visible_range(&mut self, min_x: f64, max_x: f64) {
+        if self.follow_latest {
+            return;
+        }
+
+        let history_start_x = self.history_start.timestamp_millis() as f64 / 1000.0;
+        let requested_min_x = min_x.max(history_start_x);
+        let requested_max_x = max_x.max(requested_min_x + 1.0);
+
+        if self
+            .last_requested_range
+            .is_some_and(|(last_min, last_max)| {
+                (requested_min_x - last_min).abs() < 1.0 && (requested_max_x - last_max).abs() < 1.0
+            })
+        {
+            return;
+        }
+
+        let Some(start) =
+            DateTime::from_timestamp_millis((requested_min_x * 1000.0).floor() as i64)
+        else {
+            return;
+        };
+        let Some(end) = DateTime::from_timestamp_millis((requested_max_x * 1000.0).ceil() as i64)
+        else {
+            return;
+        };
+
+        if self
+            .command_sender
+            .send(GraphCommand::LoadVisibleRange { start, end })
+            .is_ok()
+        {
+            self.last_requested_range = Some((requested_min_x, requested_max_x));
         }
     }
 }
@@ -313,6 +377,10 @@ impl eframe::App for MonitorGraphApp {
                         .color(egui::Color32::from_rgb(231, 111, 81)),
                     );
                 });
+            self.maybe_request_visible_range(
+                throughput_plot.transform.bounds().min()[0],
+                throughput_plot.transform.bounds().max()[0],
+            );
             self.sync_follow_mode(ctx, &throughput_plot.response);
 
             ui.add_space(INTER_PLOT_SPACING);
@@ -486,5 +554,75 @@ mod tests {
         assert!(reduced.len() <= 512);
         assert_eq!(reduced.first().unwrap().x, 0.0);
         assert_eq!(reduced.last().unwrap().x, 9_999.0);
+    }
+
+    #[test]
+    fn replace_history_keeps_newest_known_sample() {
+        let (_event_sender, event_receiver) = std::sync::mpsc::channel();
+        let (command_sender, _command_receiver) = std::sync::mpsc::channel();
+        let history_start = DateTime::parse_from_rfc3339("2026-03-15T18:30:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut app = MonitorGraphApp::new(
+            egui::Context::default(),
+            "test".to_string(),
+            "0.0.0".to_string(),
+            event_receiver,
+            command_sender,
+            history_start,
+        );
+
+        let latest = TelemetrySample::new(
+            DateTime::parse_from_rfc3339("2026-03-15T18:35:00+00:00")
+                .unwrap()
+                .with_timezone(&Utc),
+            "5G-1".to_string(),
+            70,
+            100,
+            200,
+        );
+        app.push_sample(latest.clone());
+
+        app.replace_history(vec![TelemetrySample::new(
+            DateTime::parse_from_rfc3339("2026-03-15T18:34:00+00:00")
+                .unwrap()
+                .with_timezone(&Utc),
+            "5G-1".to_string(),
+            69,
+            90,
+            180,
+        )]);
+
+        assert_eq!(
+            app.latest_sample.as_ref().unwrap().timestamp_utc,
+            latest.timestamp_utc
+        );
+    }
+
+    #[test]
+    fn visible_range_requests_are_debounced() {
+        let (_event_sender, event_receiver) = std::sync::mpsc::channel();
+        let (command_sender, command_receiver) = std::sync::mpsc::channel();
+        let history_start = DateTime::parse_from_rfc3339("2026-03-15T18:30:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut app = MonitorGraphApp::new(
+            egui::Context::default(),
+            "test".to_string(),
+            "0.0.0".to_string(),
+            event_receiver,
+            command_sender,
+            history_start,
+        );
+
+        app.follow_latest = false;
+        app.maybe_request_visible_range(100.0, 200.0);
+        app.maybe_request_visible_range(100.4, 200.4);
+
+        assert!(matches!(
+            command_receiver.recv().unwrap(),
+            GraphCommand::LoadVisibleRange { .. }
+        ));
+        assert!(command_receiver.try_recv().is_err());
     }
 }

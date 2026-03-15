@@ -42,6 +42,8 @@ Optional environment variables can override those paths:
 - `SRM_DATA_API_CONFIG`
 - `SRM_GRAPH_GUI_CONFIG`
 
+For the GUI, `history_start` is the oldest timestamp the client will request from the API. On startup it loads the most recent five minutes, and after that it keeps only the currently displayed time range in memory. Pan or zoom to a different range and the GUI requests that range from the API instead of caching full history locally.
+
 ## Docker Compose
 
 The repository includes [docker-compose.yml](docker-compose.yml) to start MongoDB, the monitor service, and the data API together.
