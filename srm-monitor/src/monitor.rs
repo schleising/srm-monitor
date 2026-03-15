@@ -7,6 +7,7 @@ use signal_hook::flag;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::str::FromStr;
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
@@ -14,10 +15,26 @@ use std::time::Duration;
 
 const CSV_FILE_PATH: &str = "avg_rates.csv";
 const NODE_ID: i32 = 8;
-const POLL_INTERVAL_SECS: u64 = 30;
+const POLL_INTERVAL_SECS: u64 = 1;
 const TIMESTAMP_FIELD_WIDTH: usize = 25;
 const BAND_FIELD_WIDTH: usize = 4;
 const SLEEP_SLICE_MILLIS: u64 = 250;
+pub const APPLICATION_CLOSE_SIGNAL: usize = usize::MAX;
+
+#[derive(Clone, Debug)]
+pub struct MonitorSample {
+    pub captured_at: DateTime<Utc>,
+    pub band: String,
+    pub signal_strength: i32,
+    pub rx_bps: u64,
+    pub tx_bps: u64,
+}
+
+#[derive(Clone, Debug)]
+pub enum MonitorEvent {
+    Sample(MonitorSample),
+    Error(String),
+}
 
 // The monitor runtime talks to `Synology` in production, but these traits let tests
 // substitute deterministic connectors and sessions without making live HTTP calls.
@@ -50,15 +67,20 @@ pub(crate) struct Monitor<S = Synology, C = LiveConnector, W = File> {
     last_band: Option<String>,
     synology: Option<S>,
     connector: C,
+    event_sender: Option<Sender<MonitorEvent>>,
 }
 
 impl Monitor<Synology, LiveConnector, File> {
-    pub fn new() -> Result<Self> {
+    pub fn new(
+        received_signal: Arc<AtomicUsize>,
+        event_sender: Option<Sender<MonitorEvent>>,
+    ) -> Result<Self> {
         Ok(Self::with_parts(
             local_timezone()?,
-            install_shutdown_handlers()?,
+            received_signal,
             open_csv_file()?,
             LiveConnector,
+            event_sender,
         ))
     }
 }
@@ -74,6 +96,7 @@ where
         received_signal: Arc<AtomicUsize>,
         csv_file: W,
         connector: C,
+        event_sender: Option<Sender<MonitorEvent>>,
     ) -> Self {
         Self {
             timezone,
@@ -82,6 +105,7 @@ where
             last_band: None,
             synology: None,
             connector,
+            event_sender,
         }
     }
 
@@ -125,6 +149,12 @@ where
         true
     }
 
+    fn send_event(&self, event: MonitorEvent) {
+        if let Some(sender) = &self.event_sender {
+            let _ = sender.send(event);
+        }
+    }
+
     fn ensure_session(&mut self, username: &str, password: &str) -> bool {
         if self.synology.is_some() {
             return true;
@@ -137,6 +167,7 @@ where
             }
             Err(err) => {
                 eprintln!("error=login_failed details={}", err);
+                self.send_event(MonitorEvent::Error(format!("Login failed: {}", err)));
                 // Back off once after a failed login; the caller skips the normal end-of-loop sleep.
                 self.sleep_until_next_poll();
                 false
@@ -156,7 +187,8 @@ where
 
         match fetch_result {
             Ok((band, signal_strength, rx_bps, tx_bps)) => {
-                let now = Utc::now().with_timezone(&self.timezone);
+                let captured_at = Utc::now();
+                let now = captured_at.with_timezone(&self.timezone);
                 let csv_timestamp = iso8601_timestamp(now);
 
                 append_sample(
@@ -167,10 +199,18 @@ where
                     rx_bps,
                     tx_bps,
                 )?;
+                self.send_event(MonitorEvent::Sample(MonitorSample {
+                    captured_at,
+                    band: band.clone(),
+                    signal_strength,
+                    rx_bps,
+                    tx_bps,
+                }));
                 self.print_band_change(now, &band, signal_strength, rx_bps, tx_bps);
             }
             Err(err) => {
                 eprintln!("error=fetch_failed details={}", err);
+                self.send_event(MonitorEvent::Error(format!("Fetch failed: {}", err)));
                 self.synology = None;
             }
         }
@@ -309,11 +349,20 @@ fn format_bps(rate_bps: u64) -> String {
     }
 }
 
-fn install_shutdown_handlers() -> Result<Arc<AtomicUsize>> {
+pub fn install_shutdown_handlers() -> Result<Arc<AtomicUsize>> {
     let received_signal = Arc::new(AtomicUsize::new(0));
     flag::register_usize(SIGINT, Arc::clone(&received_signal), SIGINT as usize)?;
     flag::register_usize(SIGTERM, Arc::clone(&received_signal), SIGTERM as usize)?;
     Ok(received_signal)
+}
+
+pub fn request_application_shutdown(received_signal: &AtomicUsize) {
+    let _ = received_signal.compare_exchange(
+        0,
+        APPLICATION_CLOSE_SIGNAL,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
 }
 
 fn sleep_until_signal_or_timeout(
@@ -338,6 +387,10 @@ fn sleep_until_signal_or_timeout(
 }
 
 fn shutdown_signal_name(signal: usize) -> &'static str {
+    if signal == APPLICATION_CLOSE_SIGNAL {
+        return "WINDOW_CLOSE";
+    }
+
     match signal as i32 {
         SIGINT => "SIGINT",
         SIGTERM => "SIGTERM",
@@ -351,6 +404,7 @@ mod tests {
     use chrono::TimeZone;
     use std::cell::RefCell;
     use std::collections::VecDeque;
+    use std::sync::mpsc;
 
     struct MockSession {
         fetch_results: RefCell<VecDeque<Result<(String, i32, u64, u64)>>>,
@@ -402,6 +456,7 @@ mod tests {
             Arc::new(AtomicUsize::new(0)),
             Vec::new(),
             connector,
+            None,
         )
     }
 
@@ -463,7 +518,17 @@ mod tests {
     fn shutdown_signal_name_maps_known_signals() {
         assert_eq!(shutdown_signal_name(SIGINT as usize), "SIGINT");
         assert_eq!(shutdown_signal_name(SIGTERM as usize), "SIGTERM");
+        assert_eq!(shutdown_signal_name(APPLICATION_CLOSE_SIGNAL), "WINDOW_CLOSE");
         assert_eq!(shutdown_signal_name(999), "UNKNOWN");
+    }
+
+    #[test]
+    fn request_application_shutdown_sets_close_signal_once() {
+        let signal = AtomicUsize::new(0);
+
+        request_application_shutdown(&signal);
+
+        assert_eq!(signal.load(Ordering::Relaxed), APPLICATION_CLOSE_SIGNAL);
     }
 
     #[test]
@@ -556,5 +621,35 @@ mod tests {
         assert!(csv.contains(",5G-2,-65,300,400\n"));
         assert!(csv.contains(",5G-1,-55,500,600\n"));
         assert_eq!(monitor.last_band.as_deref(), Some("5G-1"));
+    }
+
+    #[test]
+    fn poll_once_emits_sample_event() {
+        let (sender, receiver) = mpsc::channel();
+        let connector = MockConnector::new(vec![Ok(MockSession::new(vec![Ok((
+            "5G-1".to_string(),
+            -55,
+            1_300_000_000,
+            1_404_000_000,
+        ))]))]);
+        let mut monitor = Monitor::with_parts(
+            chrono_tz::Europe::London,
+            Arc::new(AtomicUsize::new(0)),
+            Vec::new(),
+            connector,
+            Some(sender),
+        );
+
+        assert!(monitor.ensure_session("user", "pass"));
+        monitor.poll_once().unwrap();
+
+        let MonitorEvent::Sample(sample) = receiver.try_recv().unwrap() else {
+            panic!("expected sample event");
+        };
+
+        assert_eq!(sample.band, "5G-1");
+        assert_eq!(sample.signal_strength, -55);
+        assert_eq!(sample.rx_bps, 1_300_000_000);
+        assert_eq!(sample.tx_bps, 1_404_000_000);
     }
 }
