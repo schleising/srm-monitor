@@ -1,4 +1,5 @@
 use crate::monitor::{MonitorEvent, MonitorSample, request_application_shutdown};
+use crate::profiling;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Local, Utc};
 use eframe::egui;
@@ -83,6 +84,7 @@ impl MonitorGraphApp {
         receiver: Receiver<MonitorEvent>,
         shutdown_signal: Arc<AtomicUsize>,
     ) -> Self {
+        let _profile_scope = profiling::scope("graph.initialize");
         let pending_events = Arc::new(Mutex::new(VecDeque::new()));
         spawn_event_relay(receiver, pending_events.clone(), egui_context);
 
@@ -102,6 +104,11 @@ impl MonitorGraphApp {
 
         match load_history_samples() {
             Ok(samples) => {
+                profiling::record_metric(
+                    "graph.history_samples_loaded",
+                    samples.len() as f64,
+                    "samples",
+                );
                 for sample in samples {
                     app.push_sample(sample);
                 }
@@ -124,9 +131,11 @@ impl MonitorGraphApp {
         self.signal_series
             .push([timestamp, sample.signal_strength as f64]);
         self.latest_sample = Some(sample);
+        profiling::record_metric("graph.cached_points", self.rx_series.len() as f64, "points");
     }
 
     fn ingest_events(&mut self) -> bool {
+        let _profile_scope = profiling::scope("graph.ingest_events");
         let Ok(mut pending_events) = self.pending_events.lock() else {
             self.latest_error = Some("UI event queue poisoned".to_string());
             return false;
@@ -136,7 +145,9 @@ impl MonitorGraphApp {
         drop(pending_events);
 
         let mut changed = false;
+        let mut drained_count = 0usize;
         while let Some(event) = drained_events.pop_front() {
+            drained_count += 1;
             match event {
                 MonitorEvent::Sample(sample) => {
                     self.push_sample(sample);
@@ -148,6 +159,10 @@ impl MonitorGraphApp {
                     changed = true;
                 }
             }
+        }
+
+        if drained_count != 0 {
+            profiling::record_metric("graph.events_drained", drained_count as f64, "events");
         }
 
         changed
@@ -181,8 +196,12 @@ impl MonitorGraphApp {
     }
 
     fn visible_points(&self, series: &[PlotDatum], min_x: f64, max_x: f64) -> PlotPoints<'static> {
+        let _profile_scope = profiling::scope("graph.visible_points");
         let visible = visible_range(series, min_x, max_x);
-        PlotPoints::Owned(decimate_visible_points(visible, MAX_RENDERED_POINTS))
+        profiling::record_metric("graph.visible_input_points", visible.len() as f64, "points");
+        let decimated = decimate_visible_points(visible, MAX_RENDERED_POINTS);
+        profiling::record_metric("graph.rendered_points", decimated.len() as f64, "points");
+        PlotPoints::Owned(decimated)
     }
 
     fn render_plot_controls(&mut self, ui: &mut egui::Ui) {
@@ -246,6 +265,7 @@ impl Drop for MonitorGraphApp {
 
 impl eframe::App for MonitorGraphApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let _profile_scope = profiling::scope("graph.update");
         let _ = self.ingest_events();
 
         if self.shutdown_signal.load(Ordering::Relaxed) != 0 {
@@ -339,6 +359,7 @@ impl eframe::App for MonitorGraphApp {
 }
 
 fn load_history_samples() -> Result<VecDeque<MonitorSample>> {
+    let _profile_scope = profiling::scope("graph.load_history_samples");
     let contents = match fs::read_to_string(CSV_FILE_PATH) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(VecDeque::new()),
@@ -367,6 +388,11 @@ fn spawn_event_relay(
             while let Ok(event) = receiver.recv() {
                 if let Ok(mut queue) = pending_events.lock() {
                     queue.push_back(event);
+                    profiling::record_metric(
+                        "graph.pending_event_queue",
+                        queue.len() as f64,
+                        "events",
+                    );
                 } else {
                     break;
                 }
@@ -394,6 +420,7 @@ fn visible_range(series: &[PlotDatum], min_x: f64, max_x: f64) -> &[PlotDatum] {
 }
 
 fn decimate_visible_points(points: &[PlotDatum], max_points: usize) -> Vec<egui_plot::PlotPoint> {
+    let _profile_scope = profiling::scope("graph.decimate_visible_points");
     if points.is_empty() || max_points == 0 {
         return Vec::new();
     }

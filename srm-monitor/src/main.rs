@@ -1,5 +1,6 @@
 mod graph;
 mod monitor;
+mod profiling;
 mod synology;
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
@@ -26,6 +27,7 @@ fn read_credentials() -> Result<Credentials> {
 }
 
 fn run() -> Result<()> {
+    let _profiling_session = profiling::init_from_env()?;
     println!("{} v{}", APP_NAME, APP_VERSION);
     let creds = read_credentials()?;
     let shutdown_signal = monitor::install_shutdown_handlers()?;

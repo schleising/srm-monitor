@@ -1,3 +1,4 @@
+use crate::profiling;
 use crate::synology::Synology;
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Utc};
@@ -160,6 +161,7 @@ where
             return true;
         }
 
+        let _profile_scope = profiling::scope("monitor.connect_session");
         match self.connector.connect(username, password) {
             Ok(session) => {
                 self.synology = Some(session);
@@ -176,12 +178,14 @@ where
     }
 
     fn poll_once(&mut self) -> Result<()> {
+        let _profile_scope = profiling::scope("monitor.poll_once");
         let fetch_result = {
             let Some(session) = self.synology.as_ref() else {
                 return Ok(());
             };
             // Keep the immutable borrow scoped to the fetch call so we can mutate monitor state
             // afterward if the fetch fails or if a new band needs to be recorded.
+            let _fetch_scope = profiling::scope("monitor.fetch_avg_rates");
             session.fetch_avg_rates(NODE_ID)
         };
 
@@ -191,6 +195,7 @@ where
                 let now = captured_at.with_timezone(&self.timezone);
                 let csv_timestamp = iso8601_timestamp(now);
 
+                let _append_scope = profiling::scope("monitor.append_sample");
                 append_sample(
                     &mut self.csv_file,
                     &csv_timestamp,

@@ -69,6 +69,14 @@ Test:
 cargo test
 ```
 
+Optional profiling:
+
+```bash
+SRM_PROFILE=1 cargo run
+```
+
+When enabled, the app writes raw trace events and an aggregated summary to `srm-monitor/instrumentation/latest/trace.ndjson` and `srm-monitor/instrumentation/latest/summary.json`. The folder is gitignored so the output stays local.
+
 ## Test Coverage
 
 The current test suite covers:
