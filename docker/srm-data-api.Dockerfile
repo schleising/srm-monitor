@@ -21,5 +21,4 @@ COPY --from=builder /workspace/target/release/srm-data-api /usr/local/bin/srm-da
 COPY docker/entrypoint-data-api.sh /usr/local/bin/entrypoint-data-api.sh
 RUN chmod +x /usr/local/bin/entrypoint-data-api.sh
 
-EXPOSE 6081
 ENTRYPOINT ["/usr/local/bin/entrypoint-data-api.sh"]

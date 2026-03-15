@@ -67,6 +67,8 @@ cp .env.example .env
 docker compose up -d
 ```
 
+In the deployment-oriented Compose setup, only the web UI is published on the host. MongoDB and the data API stay internal to the Compose network.
+
 For backend plus browser deployment, the only file you need to edit is a local `.env` copied from [.env.example](.env.example). That file is gitignored and only needs these values:
 
 - `SRM_SYNOLOGY_USERNAME`
@@ -82,6 +84,7 @@ The launcher will:
 
 - read Synology credentials from `.env`
 - start Docker Compose for MongoDB, the monitor service, and the API
+- apply a temporary local override that publishes the API on `127.0.0.1:6081` for the native GUI only
 - wait for the API to answer on `http://127.0.0.1:6081`
 - create `srm-monitor/config/gui.toml` if it does not already exist
 - launch `cargo run -p srm-graph-gui`
@@ -108,7 +111,7 @@ Stop the stack:
 docker compose down
 ```
 
-The browser dashboard will be available at `http://127.0.0.1:6080`, and the API will be available at `http://127.0.0.1:6081/telemetry` on the host.
+The browser dashboard will be available at `http://127.0.0.1:6080` on the host. The API and MongoDB are kept internal to the Compose network during normal deployment.
 
 MongoDB keeps a one-week rolling retention window for telemetry documents via a TTL index on `timestamp_utc`. That same single-field index is used for the API's time-range queries.
 

@@ -5,8 +5,11 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 ENV_FILE="$REPO_ROOT/.env"
 GUI_CONFIG_PATH="$REPO_ROOT/srm-monitor/config/gui.toml"
+COMPOSE_FILE="$REPO_ROOT/docker-compose.yml"
+GUI_API_PORT=${SRM_GUI_API_PORT:-6081}
+COMPOSE_OVERRIDE_FILE=
 
-API_BASE_URL=${SRM_GUI_API_BASE_URL:-http://127.0.0.1:6081}
+API_BASE_URL=${SRM_GUI_API_BASE_URL:-http://127.0.0.1:$GUI_API_PORT}
 GUI_REFRESH_INTERVAL_SECS=${SRM_GUI_REFRESH_INTERVAL_SECS:-1}
 GUI_HISTORY_START=${SRM_GUI_HISTORY_START:-1970-01-01T00:00:00Z}
 API_HEALTHCHECK_END=${SRM_API_HEALTHCHECK_END:-2100-01-01T00:00:00Z}
@@ -51,6 +54,20 @@ load_env_file() {
         . "$ENV_FILE"
         set +a
     fi
+}
+
+ensure_compose_override() {
+        COMPOSE_OVERRIDE_FILE=$(mktemp "${TMPDIR:-/tmp}/srm-gui-compose.XXXXXX.yml")
+        cat > "$COMPOSE_OVERRIDE_FILE" <<EOF
+services:
+    data-api:
+        ports:
+            - "$GUI_API_PORT:6081"
+EOF
+}
+
+docker_compose() {
+        docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE_FILE" "$@"
 }
 
 require_credentials() {
@@ -104,12 +121,19 @@ wait_for_api() {
 
 cleanup() {
     if [ "$KEEP_BACKEND" -eq 1 ]; then
+        if [ -n "$COMPOSE_OVERRIDE_FILE" ] && [ -f "$COMPOSE_OVERRIDE_FILE" ]; then
+            rm -f "$COMPOSE_OVERRIDE_FILE"
+        fi
         return
     fi
 
     echo "stopping compose stack"
     cd "$REPO_ROOT"
-    docker compose down
+    docker_compose down
+
+    if [ -n "$COMPOSE_OVERRIDE_FILE" ] && [ -f "$COMPOSE_OVERRIDE_FILE" ]; then
+        rm -f "$COMPOSE_OVERRIDE_FILE"
+    fi
 }
 
 launch_gui() {
@@ -119,16 +143,15 @@ launch_gui() {
 
 load_env_file
 require_credentials
+ensure_compose_override
 
-if [ "$KEEP_BACKEND" -eq 0 ]; then
-    trap cleanup EXIT INT TERM
-fi
+trap cleanup EXIT INT TERM
 
 ensure_gui_config
 
 cd "$REPO_ROOT"
 echo "starting compose stack"
-docker compose up --build -d
+docker_compose up --build -d
 wait_for_api
 
 if [ "$BACKEND_ONLY" -eq 1 ]; then
