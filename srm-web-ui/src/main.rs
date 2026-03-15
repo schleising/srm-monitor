@@ -65,6 +65,7 @@ fn build_state(config: WebConfig) -> AppState {
 fn build_app(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
+        .route("/favicon.svg", get(favicon))
         .route("/app.js", get(app_js))
         .route("/styles.css", get(styles_css))
         .route("/api/telemetry", get(proxy_telemetry))
@@ -73,6 +74,16 @@ fn build_app(state: AppState) -> Router {
 
 async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
+}
+
+async fn favicon() -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("image/svg+xml; charset=utf-8"),
+        )],
+        FAVICON_SVG,
+    )
 }
 
 async fn styles_css() -> impl IntoResponse {
@@ -158,6 +169,7 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SRM Monitor</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -232,6 +244,30 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
   <script src="/app.js"></script>
 </body>
 </html>
+"##;
+
+const FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="sky" x1="18" y1="12" x2="112" y2="116" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1f6fd1"/>
+      <stop offset="0.55" stop-color="#17a398"/>
+      <stop offset="1" stop-color="#f08a4b"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="36" y1="24" x2="92" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#fef3de" stop-opacity="0.72"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="108" height="108" rx="28" fill="url(#sky)"/>
+  <path d="M31 92c9-25 24-39 44-39 11 0 21 4 31 12" fill="none" stroke="#0c2230" stroke-opacity="0.24" stroke-width="11" stroke-linecap="round"/>
+  <path d="M30 90c10-22 24-34 42-34 10 0 20 4 30 11" fill="none" stroke="url(#glow)" stroke-width="8" stroke-linecap="round"/>
+  <rect x="30" y="69" width="12" height="25" rx="6" fill="#fff7ea"/>
+  <rect x="48" y="57" width="12" height="37" rx="6" fill="#fff7ea"/>
+  <rect x="66" y="44" width="12" height="50" rx="6" fill="#fff7ea"/>
+  <rect x="84" y="30" width="12" height="64" rx="6" fill="#fff7ea"/>
+  <circle cx="95" cy="34" r="11" fill="#fff7ea"/>
+  <circle cx="95" cy="34" r="5" fill="#f08a4b"/>
+</svg>
 "##;
 
 const STYLES_CSS: &str = r##":root {
@@ -719,6 +755,7 @@ mod tests {
     #[test]
     fn index_html_exposes_history_window_selector_and_default_copy() {
         assert!(INDEX_HTML.contains("id=\"history-window\""));
+        assert!(INDEX_HTML.contains("rel=\"icon\" href=\"/favicon.svg\""));
         assert!(INDEX_HTML.contains("Rx and Tx over the last 12 hours"));
         assert!(INDEX_HTML.contains("Percentage over the last 12 hours"));
     }
@@ -770,6 +807,32 @@ mod tests {
         let script = std::str::from_utf8(&body).unwrap();
 
         assert!(script.contains("const defaultHistoryWindowMs = 43200000;"));
+    }
+
+    #[tokio::test]
+    async fn favicon_route_serves_svg() {
+        let app = build_app(build_state(test_config("http://127.0.0.1:6081", 30, 43200)));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/favicon.svg")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            headers.get(header::CONTENT_TYPE).unwrap(),
+            "image/svg+xml; charset=utf-8"
+        );
+        assert!(std::str::from_utf8(&body).unwrap().contains("<svg"));
     }
 
     #[tokio::test]
