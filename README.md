@@ -65,7 +65,7 @@ To start the backend stack and then launch the native GUI with one command, run:
 
 The launcher will:
 
-- read Synology credentials from `.env` or fall back to `srm-monitor/secrets/srm_login.toml`
+- read Synology credentials from `.env`
 - start Docker Compose for MongoDB, the monitor service, and the API
 - wait for the API to answer on `http://127.0.0.1:6081`
 - create `srm-monitor/config/gui.toml` if it does not already exist

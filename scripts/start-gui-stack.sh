@@ -4,7 +4,6 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 ENV_FILE="$REPO_ROOT/.env"
-SECRET_FILE="$REPO_ROOT/srm-monitor/secrets/srm_login.toml"
 GUI_CONFIG_PATH="$REPO_ROOT/srm-monitor/config/gui.toml"
 
 API_BASE_URL=${SRM_GUI_API_BASE_URL:-http://127.0.0.1:6081}
@@ -54,27 +53,9 @@ load_env_file() {
     fi
 }
 
-parse_secret_value() {
-    key=$1
-    file=$2
-    awk -F'"' -v key="$key" '$1 ~ "^" key "[[:space:]]*=" { print $2; exit }' "$file"
-}
-
-load_secret_fallbacks() {
-    if [ -z "${SRM_SYNOLOGY_USERNAME:-}" ] && [ -f "$SECRET_FILE" ]; then
-        SRM_SYNOLOGY_USERNAME=$(parse_secret_value username "$SECRET_FILE")
-        export SRM_SYNOLOGY_USERNAME
-    fi
-
-    if [ -z "${SRM_SYNOLOGY_PASSWORD:-}" ] && [ -f "$SECRET_FILE" ]; then
-        SRM_SYNOLOGY_PASSWORD=$(parse_secret_value password "$SECRET_FILE")
-        export SRM_SYNOLOGY_PASSWORD
-    fi
-}
-
 require_credentials() {
     if [ -z "${SRM_SYNOLOGY_USERNAME:-}" ] || [ -z "${SRM_SYNOLOGY_PASSWORD:-}" ]; then
-        echo "missing Synology credentials; set them in .env or srm-monitor/secrets/srm_login.toml" >&2
+        echo "missing Synology credentials; set them in .env" >&2
         exit 1
     fi
 }
@@ -137,7 +118,6 @@ launch_gui() {
 }
 
 load_env_file
-load_secret_fallbacks
 require_credentials
 
 if [ "$KEEP_BACKEND" -eq 0 ]; then
