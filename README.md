@@ -6,6 +6,7 @@ Workspace for three independent SRM telemetry applications backed by a shared Ru
 
 - `srm-monitor-service`: polls Synology SRM and writes telemetry samples into MongoDB.
 - `srm-data-api`: serves telemetry samples from MongoDB over HTTP as JSON.
+- `srm-web-ui`: serves a responsive browser dashboard and proxies telemetry requests to the API.
 - `srm-graph-gui`: native `wgpu` GUI that queries the HTTP API and plots the returned data.
 - `srm-common`: shared library for config loading, Synology API access, and telemetry models.
 
@@ -17,6 +18,7 @@ Each runnable application can compile and run independently.
 srm-common/
 srm-monitor-service/
 srm-data-api/
+srm-web-ui/
 srm-monitor/
 ```
 
@@ -26,12 +28,14 @@ Each runnable application reads a TOML config file from its own `config/` folder
 
 - `srm-monitor-service/config/service.example.toml`
 - `srm-data-api/config/api.example.toml`
+- `srm-web-ui/config/web.example.toml`
 - `srm-monitor/config/gui.example.toml`
 
 Default runtime config paths:
 
 - `srm-monitor-service/config/service.toml`
 - `srm-data-api/config/api.toml`
+- `srm-web-ui/config/web.toml`
 - `srm-monitor/config/gui.toml`
 
 When launched from the workspace root with `cargo run -p ...`, each application resolves its default config relative to its own crate directory.
@@ -47,6 +51,7 @@ For the GUI, `history_start` is the oldest timestamp the client will request fro
 ## Docker Compose
 
 The repository includes [docker-compose.yml](docker-compose.yml) to start MongoDB, the monitor service, and the data API together.
+The compose stack also includes `srm-web-ui`, which serves the browser dashboard on port `6080`.
 
 Create a local `.env` from [.env.example](.env.example) and fill in the Synology credentials before starting the stack.
 
@@ -60,7 +65,7 @@ The launcher will:
 
 - read Synology credentials from `.env` or fall back to `srm-monitor/secrets/srm_login.toml`
 - start Docker Compose for MongoDB, the monitor service, and the API
-- wait for the API to answer on `http://127.0.0.1:8080`
+- wait for the API to answer on `http://127.0.0.1:6081`
 - create `srm-monitor/config/gui.toml` if it does not already exist
 - launch `cargo run -p srm-graph-gui`
 
@@ -78,7 +83,7 @@ Stop the stack:
 docker compose down
 ```
 
-The API will be available at `http://127.0.0.1:8080/telemetry` on the host, while the services use the internal MongoDB hostname `mongodb` inside the compose network.
+The browser dashboard will be available at `http://127.0.0.1:6080`, and the API will be available at `http://127.0.0.1:6081/telemetry` on the host.
 
 ## Run
 
@@ -94,13 +99,20 @@ Start the HTTP API:
 cargo run -p srm-data-api
 ```
 
+Start the browser dashboard:
+
+```bash
+cargo run -p srm-web-ui
+```
+
 Start the GUI:
 
 ```bash
 cargo run -p srm-graph-gui
 ```
 
-The GUI queries `/telemetry` with RFC3339 `start` and `end` parameters and renders the JSON response.
+The browser dashboard proxies `/api/telemetry` to the API and is designed to work cleanly on both desktop and mobile layouts.
+The native GUI queries `/telemetry` with RFC3339 `start` and `end` parameters and renders the JSON response.
 
 ## Development
 

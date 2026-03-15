@@ -8,3 +8,4 @@ secrets
 srm-monitor-service/config/service.toml
 srm-data-api/config/api.toml
 srm-monitor/config/gui.toml
+srm-web-ui/config/web.toml

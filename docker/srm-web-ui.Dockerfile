@@ -8,7 +8,7 @@ COPY srm-monitor ./srm-monitor
 COPY srm-monitor-service ./srm-monitor-service
 COPY srm-web-ui ./srm-web-ui
 
-RUN cargo build --release -p srm-monitor-service
+RUN cargo build --release -p srm-web-ui
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -16,9 +16,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-ENV SRM_MONITOR_SERVICE_CONFIG=/app/config/service.toml
-COPY --from=builder /workspace/target/release/srm-monitor-service /usr/local/bin/srm-monitor-service
-COPY docker/entrypoint-monitor-service.sh /usr/local/bin/entrypoint-monitor-service.sh
-RUN chmod +x /usr/local/bin/entrypoint-monitor-service.sh
+ENV SRM_WEB_UI_CONFIG=/app/config/web.toml
+COPY --from=builder /workspace/target/release/srm-web-ui /usr/local/bin/srm-web-ui
+COPY docker/entrypoint-web-ui.sh /usr/local/bin/entrypoint-web-ui.sh
+RUN chmod +x /usr/local/bin/entrypoint-web-ui.sh
 
-ENTRYPOINT ["/usr/local/bin/entrypoint-monitor-service.sh"]
+EXPOSE 6000
+ENTRYPOINT ["/usr/local/bin/entrypoint-web-ui.sh"]

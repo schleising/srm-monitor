@@ -26,8 +26,10 @@ srm-monitor/instrumentation/
 srm-monitor/config/gui.toml
 srm-monitor-service/config/service.toml
 srm-data-api/config/api.toml
+srm-web-ui/config/web.toml
 .env
 !srm-monitor/config/gui.example.toml
 !srm-monitor-service/config/service.example.toml
 !srm-data-api/config/api.example.toml
+!srm-web-ui/config/web.example.toml
 !.env.example

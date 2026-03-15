@@ -4,6 +4,7 @@ members = [
     "srm-data-api",
     "srm-monitor",
     "srm-monitor-service",
+    "srm-web-ui",
 ]
 resolver = "2"
 
@@ -16,6 +17,7 @@ eframe = { version = "0.31", default-features = false, features = ["default_font
 egui_plot = "0.31"
 futures-util = "0.3"
 mongodb = "3.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.44", features = ["full"] }

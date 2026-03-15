@@ -1,0 +1,12 @@
+[package]
+name = "srm-web-ui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+tokio.workspace = true
+srm-common = { path = "../srm-common" }

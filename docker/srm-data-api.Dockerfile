@@ -6,6 +6,7 @@ COPY srm-common ./srm-common
 COPY srm-data-api ./srm-data-api
 COPY srm-monitor ./srm-monitor
 COPY srm-monitor-service ./srm-monitor-service
+COPY srm-web-ui ./srm-web-ui
 
 RUN cargo build --release -p srm-data-api
 

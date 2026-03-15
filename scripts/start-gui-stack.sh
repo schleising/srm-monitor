@@ -7,7 +7,7 @@ ENV_FILE="$REPO_ROOT/.env"
 SECRET_FILE="$REPO_ROOT/srm-monitor/secrets/srm_login.toml"
 GUI_CONFIG_PATH="$REPO_ROOT/srm-monitor/config/gui.toml"
 
-API_BASE_URL=${SRM_GUI_API_BASE_URL:-http://127.0.0.1:8080}
+API_BASE_URL=${SRM_GUI_API_BASE_URL:-http://127.0.0.1:6081}
 GUI_REFRESH_INTERVAL_SECS=${SRM_GUI_REFRESH_INTERVAL_SECS:-1}
 GUI_HISTORY_START=${SRM_GUI_HISTORY_START:-1970-01-01T00:00:00Z}
 API_HEALTHCHECK_END=${SRM_API_HEALTHCHECK_END:-2100-01-01T00:00:00Z}
@@ -80,16 +80,28 @@ require_credentials() {
 }
 
 ensure_gui_config() {
+    current_refresh_interval_secs=$GUI_REFRESH_INTERVAL_SECS
+    current_history_start=$GUI_HISTORY_START
+
     if [ -f "$GUI_CONFIG_PATH" ]; then
-        return
+        existing_refresh_interval_secs=$(awk -F'= ' '/^refresh_interval_secs/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' "$GUI_CONFIG_PATH")
+        existing_history_start=$(awk -F'"' '/^history_start/ { print $2; exit }' "$GUI_CONFIG_PATH")
+
+        if [ -n "$existing_refresh_interval_secs" ]; then
+            current_refresh_interval_secs=$existing_refresh_interval_secs
+        fi
+
+        if [ -n "$existing_history_start" ]; then
+            current_history_start=$existing_history_start
+        fi
     fi
 
     mkdir -p "$(dirname "$GUI_CONFIG_PATH")"
     cat > "$GUI_CONFIG_PATH" <<EOF
 [api]
 base_url = "$API_BASE_URL"
-refresh_interval_secs = $GUI_REFRESH_INTERVAL_SECS
-history_start = "$GUI_HISTORY_START"
+refresh_interval_secs = $current_refresh_interval_secs
+history_start = "$current_history_start"
 EOF
 }
 

@@ -40,12 +40,28 @@ services:
       mongodb:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      - "6081:6081"
     environment:
-      SRM_API_BIND_ADDRESS: 0.0.0.0:8080
+      SRM_API_BIND_ADDRESS: 0.0.0.0:6081
       SRM_MONGODB_URL: mongodb://mongodb:27017
       SRM_MONGODB_DATABASE: ${SRM_MONGODB_DATABASE:-srm}
       SRM_MONGODB_COLLECTION: ${SRM_MONGODB_COLLECTION:-telemetry}
+
+  web-ui:
+    build:
+      context: .
+      dockerfile: docker/srm-web-ui.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      data-api:
+        condition: service_started
+    ports:
+      - "6080:6080"
+    environment:
+      SRM_WEB_BIND_ADDRESS: 0.0.0.0:6080
+      SRM_WEB_API_BASE_URL: http://data-api:6081
+      SRM_WEB_REFRESH_INTERVAL_SECS: ${SRM_WEB_REFRESH_INTERVAL_SECS:-1}
+      SRM_WEB_HISTORY_WINDOW_SECS: ${SRM_WEB_HISTORY_WINDOW_SECS:-300}
 
 volumes:
   mongo-data:

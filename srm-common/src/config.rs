@@ -61,7 +61,13 @@ pub struct ServiceConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct HttpServerSettings {
-    #[serde(default = "default_bind_address")]
+    #[serde(default = "default_api_bind_address")]
+    pub bind_address: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct WebServerSettings {
+    #[serde(default = "default_web_bind_address")]
     pub bind_address: String,
 }
 
@@ -85,6 +91,22 @@ pub struct GuiConfig {
     pub api: ApiClientSettings,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct WebApiSettings {
+    #[serde(default = "default_web_api_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_refresh_interval_secs")]
+    pub refresh_interval_secs: u64,
+    #[serde(default = "default_history_window_secs")]
+    pub history_window_secs: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct WebConfig {
+    pub server: WebServerSettings,
+    pub api: WebApiSettings,
+}
+
 fn default_synology_base_url() -> String {
     "http://192.168.1.1:8000/webapi".to_string()
 }
@@ -97,8 +119,12 @@ fn default_poll_interval_secs() -> u64 {
     1
 }
 
-fn default_bind_address() -> String {
-    "127.0.0.1:8080".to_string()
+fn default_api_bind_address() -> String {
+    "127.0.0.1:6081".to_string()
+}
+
+fn default_web_bind_address() -> String {
+    "127.0.0.1:6080".to_string()
 }
 
 fn default_refresh_interval_secs() -> u64 {
@@ -107,6 +133,14 @@ fn default_refresh_interval_secs() -> u64 {
 
 fn default_history_start() -> String {
     "1970-01-01T00:00:00Z".to_string()
+}
+
+fn default_web_api_base_url() -> String {
+    "http://127.0.0.1:6081".to_string()
+}
+
+fn default_history_window_secs() -> u64 {
+    300
 }
 
 #[cfg(test)]
