@@ -340,21 +340,25 @@ impl eframe::App for MonitorGraphApp {
                     self.apply_plot_bounds(plot_ui, THROUGHPUT_MIN_MBPS, THROUGHPUT_MAX_MBPS);
                     let bounds = plot_ui.plot_bounds();
                     plot_ui.line(
-                        Line::new(self.visible_points(
-                            &self.rx_series,
-                            bounds.min()[0],
-                            bounds.max()[0],
-                        ))
-                        .name("Rx")
+                        Line::new(
+                            "Rx",
+                            self.visible_points(
+                                &self.rx_series,
+                                bounds.min()[0],
+                                bounds.max()[0],
+                            ),
+                        )
                         .color(egui::Color32::from_rgb(34, 139, 230)),
                     );
                     plot_ui.line(
-                        Line::new(self.visible_points(
-                            &self.tx_series,
-                            bounds.min()[0],
-                            bounds.max()[0],
-                        ))
-                        .name("Tx")
+                        Line::new(
+                            "Tx",
+                            self.visible_points(
+                                &self.tx_series,
+                                bounds.min()[0],
+                                bounds.max()[0],
+                            ),
+                        )
                         .color(egui::Color32::from_rgb(231, 111, 81)),
                     );
                 });
@@ -373,12 +377,14 @@ impl eframe::App for MonitorGraphApp {
                     self.apply_plot_bounds(plot_ui, SIGNAL_MIN_PERCENT, SIGNAL_MAX_PERCENT);
                     let bounds = plot_ui.plot_bounds();
                     plot_ui.line(
-                        Line::new(self.visible_points(
-                            &self.signal_series,
-                            bounds.min()[0],
-                            bounds.max()[0],
-                        ))
-                        .name("Signal")
+                        Line::new(
+                            "Signal",
+                            self.visible_points(
+                                &self.signal_series,
+                                bounds.min()[0],
+                                bounds.max()[0],
+                            ),
+                        )
                         .color(egui::Color32::from_rgb(46, 196, 182)),
                     );
                 });
