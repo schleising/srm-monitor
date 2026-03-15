@@ -42,6 +42,42 @@ Optional environment variables can override those paths:
 - `SRM_DATA_API_CONFIG`
 - `SRM_GRAPH_GUI_CONFIG`
 
+## Docker Compose
+
+The repository includes [docker-compose.yml](docker-compose.yml) to start MongoDB, the monitor service, and the data API together.
+
+Create a local `.env` from [.env.example](.env.example) and fill in the Synology credentials before starting the stack.
+
+To start the backend stack and then launch the native GUI with one command, run:
+
+```bash
+./scripts/start-gui-stack.sh
+```
+
+The launcher will:
+
+- read Synology credentials from `.env` or fall back to `srm-monitor/secrets/srm_login.toml`
+- start Docker Compose for MongoDB, the monitor service, and the API
+- wait for the API to answer on `http://127.0.0.1:8080`
+- create `srm-monitor/config/gui.toml` if it does not already exist
+- launch `cargo run -p srm-graph-gui`
+
+By default, when the GUI exits, the launcher also stops the compose stack. Pass `--keep-backend` if you want the containers left running after the GUI closes.
+
+Start the stack:
+
+```bash
+docker compose up --build -d
+```
+
+Stop the stack:
+
+```bash
+docker compose down
+```
+
+The API will be available at `http://127.0.0.1:8080/telemetry` on the host, while the services use the internal MongoDB hostname `mongodb` inside the compose network.
+
 ## Run
 
 Start the Mongo writer:

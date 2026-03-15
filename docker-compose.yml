@@ -1,0 +1,51 @@
+services:
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  monitor-service:
+    build:
+      context: .
+      dockerfile: docker/srm-monitor-service.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      SRM_SYNOLOGY_BASE_URL: ${SRM_SYNOLOGY_BASE_URL:-http://192.168.1.1:8000/webapi}
+      SRM_SYNOLOGY_NODE_ID: ${SRM_SYNOLOGY_NODE_ID:-8}
+      SRM_SYNOLOGY_POLL_INTERVAL_SECS: ${SRM_SYNOLOGY_POLL_INTERVAL_SECS:-1}
+      SRM_SYNOLOGY_USERNAME: ${SRM_SYNOLOGY_USERNAME:-}
+      SRM_SYNOLOGY_PASSWORD: ${SRM_SYNOLOGY_PASSWORD:-}
+      SRM_MONGODB_URL: mongodb://mongodb:27017
+      SRM_MONGODB_DATABASE: ${SRM_MONGODB_DATABASE:-srm}
+      SRM_MONGODB_COLLECTION: ${SRM_MONGODB_COLLECTION:-telemetry}
+
+  data-api:
+    build:
+      context: .
+      dockerfile: docker/srm-data-api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SRM_API_BIND_ADDRESS: 0.0.0.0:8080
+      SRM_MONGODB_URL: mongodb://mongodb:27017
+      SRM_MONGODB_DATABASE: ${SRM_MONGODB_DATABASE:-srm}
+      SRM_MONGODB_COLLECTION: ${SRM_MONGODB_COLLECTION:-telemetry}
+
+volumes:
+  mongo-data:

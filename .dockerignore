@@ -1,0 +1,10 @@
+.git
+.gitignore
+target
+**/target
+srm-monitor/instrumentation
+srm-monitor/avg_rates.csv
+secrets
+srm-monitor-service/config/service.toml
+srm-data-api/config/api.toml
+srm-monitor/config/gui.toml
