@@ -18,7 +18,9 @@ The `secrets/` directory is ignored by git.
 
 - CSV output is written to `srm-monitor/avg_rates.csv`.
 - A native window is created with the `wgpu` renderer, which maps to Metal on macOS hardware.
+- The window reads `avg_rates.csv` on startup so previous samples are visible immediately.
 - The window updates in real time as fresh SRM samples arrive and shows the current band, RX/TX throughput history, and signal strength history.
+- The charts use local wall clock time on the x-axis, default to a rolling five minute view, and can be panned or zoomed to inspect the full retained history.
 - CSV rows use ISO8601 timestamps with offset: `2026-03-14T21:14:38+00:00`.
 - Console output uses local timezone abbreviations such as `GMT` or `BST`.
 - The first selected band is printed once, and later output is only emitted when the selected band changes.
