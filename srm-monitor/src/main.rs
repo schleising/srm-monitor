@@ -1,5 +1,4 @@
 mod graph;
-mod profiling;
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeDelta, Utc};
 use srm_common::config::{ApiClientSettings, GuiConfig, env_or_manifest_path, load_toml_file};
@@ -15,7 +14,6 @@ const DEFAULT_CONFIG_PATH: &str = "config/gui.toml";
 const INITIAL_HISTORY_WINDOW_SECS: i64 = 5 * 60;
 
 fn run() -> Result<()> {
-    let _profiling_session = profiling::init_from_env()?;
     println!("{} v{}", APP_NAME, APP_VERSION);
     let config_path = env_or_manifest_path(
         CONFIG_ENV_VAR,

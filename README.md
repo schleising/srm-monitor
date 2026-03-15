@@ -129,19 +129,3 @@ Test:
 ```bash
 cargo test
 ```
-
-## Profiling
-
-The GUI supports optional local profiling output:
-
-```bash
-cd srm-monitor
-SRM_PROFILE=1 cargo run
-```
-
-When enabled, profiling output is written under `srm-monitor/instrumentation/latest/` as:
-
-- `trace.ndjson`
-- `summary.json`
-
-That folder is gitignored.

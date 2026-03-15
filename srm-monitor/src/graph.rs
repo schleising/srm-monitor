@@ -1,4 +1,3 @@
-use crate::profiling;
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
 use eframe::egui;
@@ -101,7 +100,6 @@ impl MonitorGraphApp {
         command_sender: Sender<GraphCommand>,
         history_start: DateTime<Utc>,
     ) -> Self {
-        let _profile_scope = profiling::scope("graph.initialize");
         let pending_events = Arc::new(Mutex::new(VecDeque::new()));
         spawn_event_relay(receiver, pending_events.clone(), egui_context);
 
@@ -126,11 +124,6 @@ impl MonitorGraphApp {
         self.tx_series.clear();
         self.signal_series.clear();
 
-        profiling::record_metric(
-            "graph.history_samples_loaded",
-            samples.len() as f64,
-            "samples",
-        );
         for sample in samples {
             self.push_sample(sample);
         }
@@ -151,11 +144,9 @@ impl MonitorGraphApp {
         {
             self.latest_sample = Some(sample);
         }
-        profiling::record_metric("graph.cached_points", self.rx_series.len() as f64, "points");
     }
 
     fn ingest_events(&mut self) -> bool {
-        let _profile_scope = profiling::scope("graph.ingest_events");
         let Ok(mut pending_events) = self.pending_events.lock() else {
             self.latest_error = Some("UI event queue poisoned".to_string());
             return false;
@@ -165,9 +156,7 @@ impl MonitorGraphApp {
         drop(pending_events);
 
         let mut changed = false;
-        let mut drained_count = 0usize;
         while let Some(event) = drained_events.pop_front() {
-            drained_count += 1;
             match event {
                 GraphEvent::ReplaceHistory(samples) => {
                     self.replace_history(samples);
@@ -179,10 +168,6 @@ impl MonitorGraphApp {
                     changed = true;
                 }
             }
-        }
-
-        if drained_count != 0 {
-            profiling::record_metric("graph.events_drained", drained_count as f64, "events");
         }
 
         changed
@@ -206,11 +191,8 @@ impl MonitorGraphApp {
     }
 
     fn visible_points(&self, series: &[PlotDatum], min_x: f64, max_x: f64) -> PlotPoints<'static> {
-        let _profile_scope = profiling::scope("graph.visible_points");
         let visible = visible_range(series, min_x, max_x);
-        profiling::record_metric("graph.visible_input_points", visible.len() as f64, "points");
         let decimated = decimate_visible_points(visible, MAX_RENDERED_POINTS);
-        profiling::record_metric("graph.rendered_points", decimated.len() as f64, "points");
         PlotPoints::Owned(decimated)
     }
 
@@ -313,7 +295,6 @@ impl MonitorGraphApp {
 
 impl eframe::App for MonitorGraphApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let _profile_scope = profiling::scope("graph.update");
         let _ = self.ingest_events();
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -417,11 +398,6 @@ fn spawn_event_relay(
             while let Ok(event) = receiver.recv() {
                 if let Ok(mut queue) = pending_events.lock() {
                     queue.push_back(event);
-                    profiling::record_metric(
-                        "graph.pending_event_queue",
-                        queue.len() as f64,
-                        "events",
-                    );
                 } else {
                     break;
                 }
@@ -449,7 +425,6 @@ fn visible_range(series: &[PlotDatum], min_x: f64, max_x: f64) -> &[PlotDatum] {
 }
 
 fn decimate_visible_points(points: &[PlotDatum], max_points: usize) -> Vec<egui_plot::PlotPoint> {
-    let _profile_scope = profiling::scope("graph.decimate_visible_points");
     if points.is_empty() || max_points == 0 {
         return Vec::new();
     }

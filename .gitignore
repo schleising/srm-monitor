@@ -21,8 +21,6 @@ target
 #.idea/
 
 secrets/
-srm-monitor/avg_rates.csv
-srm-monitor/instrumentation/
 srm-monitor/config/gui.toml
 srm-monitor-service/config/service.toml
 srm-data-api/config/api.toml
