@@ -1,0 +1,23 @@
+[workspace]
+members = [
+    "srm-common",
+    "srm-data-api",
+    "srm-monitor",
+    "srm-monitor-service",
+]
+resolver = "2"
+
+[workspace.dependencies]
+anyhow = "1.0"
+axum = "0.8"
+bson = { version = "2.15", features = ["chrono-0_4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "wgpu"] }
+egui_plot = "0.31"
+futures-util = "0.3"
+mongodb = "3.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.44", features = ["full"] }
+toml = "1.0.6"
+ureq = { version = "3.2.0", features = ["json"] }

@@ -1,0 +1,11 @@
+[package]
+name = "srm-monitor-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+mongodb.workspace = true
+tokio.workspace = true
+srm-common = { path = "../srm-common" }

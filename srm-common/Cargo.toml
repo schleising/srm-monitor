@@ -1,0 +1,15 @@
+[package]
+name = "srm-common"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+bson.workspace = true
+chrono.workspace = true
+serde.workspace = true
+toml.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

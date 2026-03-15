@@ -1,66 +1,73 @@
 # srm-monitor
 
-Rust monitor for Synology SRM mesh uplink state. The binary logs the selected uplink band and average RX/TX rates to CSV every second, prints a single console line on startup and whenever the selected band changes, opens a native hardware-accelerated telemetry window, and performs session cleanup on `SIGINT`, `SIGTERM`, or window close.
+Workspace for three independent SRM telemetry applications backed by a shared Rust library.
+
+## Applications
+
+- `srm-monitor-service`: polls Synology SRM and writes telemetry samples into MongoDB.
+- `srm-data-api`: serves telemetry samples from MongoDB over HTTP as JSON.
+- `srm-graph-gui`: native `wgpu` GUI that queries the HTTP API and plots the returned data.
+- `srm-common`: shared library for config loading, Synology API access, and telemetry models.
+
+Each runnable application can compile and run independently.
+
+## Layout
+
+```text
+srm-common/
+srm-monitor-service/
+srm-data-api/
+srm-monitor/
+```
 
 ## Configuration
 
-Create `srm-monitor/secrets/srm_login.toml` with your SRM credentials:
+Each runnable application reads a TOML config file from its own `config/` folder. Example files are committed, while the real `.toml` files are gitignored.
 
-```toml
-[credentials]
-username = "your-username"
-password = "your-password"
+- `srm-monitor-service/config/service.example.toml`
+- `srm-data-api/config/api.example.toml`
+- `srm-monitor/config/gui.example.toml`
+
+Default runtime config paths:
+
+- `srm-monitor-service/config/service.toml`
+- `srm-data-api/config/api.toml`
+- `srm-monitor/config/gui.toml`
+
+Optional environment variables can override those paths:
+
+- `SRM_MONITOR_SERVICE_CONFIG`
+- `SRM_DATA_API_CONFIG`
+- `SRM_GRAPH_GUI_CONFIG`
+
+## Run
+
+Start the Mongo writer:
+
+```bash
+cargo run -p srm-monitor-service
 ```
 
-The `secrets/` directory is ignored by git.
+Start the HTTP API:
 
-## Runtime Behavior
-
-- CSV output is written to `srm-monitor/avg_rates.csv`.
-- A native window is created with the `wgpu` renderer, which maps to Metal on macOS hardware.
-- The window reads `avg_rates.csv` on startup so previous samples are visible immediately.
-- The window updates in real time as fresh SRM samples arrive and shows the current band, RX/TX throughput history, and signal strength history.
-- The charts use local wall clock time on the x-axis, default to a rolling five minute view, and can be panned or zoomed on the x-axis to inspect the full retained history.
-- The throughput chart uses a fixed 0 to 2000 Mbps y-axis and the signal chart uses a fixed 0 to 105 percent y-axis.
-- The signal value reported by SRM is treated as a percentage, not dBm.
-- CSV rows use ISO8601 timestamps with offset: `2026-03-14T21:14:38+00:00`.
-- Console output uses local timezone abbreviations such as `GMT` or `BST`.
-- The first selected band is printed once, and later output is only emitted when the selected band changes.
-- `SIGINT`, `SIGTERM`, and closing the window trigger a clean shutdown and explicit Synology session cleanup.
-
-Example console line:
-
-```text
-Sat 14th Mar 2026 21:55 GMT band=5G-1 signalstrength=-55 tx=1.404 Gbps rx=1.300 Gbps
+```bash
+cargo run -p srm-data-api
 ```
 
-Example CSV:
+Start the GUI:
 
-```csv
-timestamp,band,signalstrength,avg_rx_bps,avg_tx_bps
-2026-03-14T21:14:38+00:00,5G-1,-55,1300000000,1733000000
+```bash
+cargo run -p srm-graph-gui
 ```
+
+The GUI queries `/telemetry` with RFC3339 `start` and `end` parameters and renders the JSON response.
 
 ## Development
 
-Build:
+Format:
 
 ```bash
-cargo build
-```
-
-Run:
-
-```bash
-cargo run
-```
-
-On macOS this opens the live graph window and uses the `wgpu` backend so rendering goes through the system GPU stack.
-
-Lint:
-
-```bash
-cargo clippy -- -D warnings
+cargo fmt --all
 ```
 
 Test:
@@ -69,19 +76,18 @@ Test:
 cargo test
 ```
 
-Optional profiling:
+## Profiling
+
+The GUI supports optional local profiling output:
 
 ```bash
+cd srm-monitor
 SRM_PROFILE=1 cargo run
 ```
 
-When enabled, the app writes raw trace events and an aggregated summary to `srm-monitor/instrumentation/latest/trace.ndjson` and `srm-monitor/instrumentation/latest/summary.json`. The folder is gitignored so the output stays local.
+When enabled, profiling output is written under `srm-monitor/instrumentation/latest/` as:
 
-## Test Coverage
+- `trace.ndjson`
+- `summary.json`
 
-The current test suite covers:
-
-- monitor control logic and retry flow with mocked session connectors
-- band-change formatting and DST-aware timestamp rendering
-- Synology response parsing and connected-uplink selection
-- error handling for missing nodes, disconnected uplinks, and HTTP status validation
+That folder is gitignored.

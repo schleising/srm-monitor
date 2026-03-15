@@ -1,19 +1,15 @@
-use crate::monitor::{MonitorEvent, MonitorSample, request_application_shutdown};
 use crate::profiling;
-use anyhow::{Result, anyhow};
-use chrono::{DateTime, Local, Utc};
+use anyhow::Result;
+use chrono::{DateTime, Local};
 use eframe::egui;
 use egui::Vec2b;
 use egui_plot::{GridMark, Legend, Line, Plot, PlotBounds, PlotPoints};
+use srm_common::models::TelemetrySample;
 use std::collections::VecDeque;
-use std::fs;
 use std::ops::RangeInclusive;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, mpsc::Receiver};
+use std::sync::{Arc, Mutex, mpsc::Receiver};
 use std::thread;
 
-const CSV_FILE_PATH: &str = "avg_rates.csv";
 const PLOT_LINK_GROUP: &str = "telemetry-time";
 const ROLLING_WINDOW_SECS: f64 = 5.0 * 60.0;
 const THROUGHPUT_MIN_MBPS: f64 = 0.0;
@@ -26,13 +22,18 @@ const INTER_PLOT_SPACING: f32 = 12.0;
 const MAX_RENDERED_POINTS: usize = 2048;
 
 type PlotDatum = [f64; 2];
-type PendingEvents = Arc<Mutex<VecDeque<MonitorEvent>>>;
+type PendingEvents = Arc<Mutex<VecDeque<GraphEvent>>>;
+
+pub enum GraphEvent {
+    ReplaceHistory(Vec<TelemetrySample>),
+    AppendSamples(Vec<TelemetrySample>),
+    Error(String),
+}
 
 pub fn run_monitor_window(
     app_name: &str,
     app_version: &str,
-    receiver: Receiver<MonitorEvent>,
-    shutdown_signal: Arc<AtomicUsize>,
+    receiver: Receiver<GraphEvent>,
 ) -> Result<()> {
     let window_title = format!("{} {}", app_name, app_version);
     let app_name = app_name.to_string();
@@ -55,7 +56,6 @@ pub fn run_monitor_window(
                 app_name,
                 app_version,
                 receiver,
-                shutdown_signal,
             )))
         }),
     )?;
@@ -66,9 +66,8 @@ pub fn run_monitor_window(
 struct MonitorGraphApp {
     app_name: String,
     app_version: String,
-    shutdown_signal: Arc<AtomicUsize>,
     pending_events: PendingEvents,
-    latest_sample: Option<MonitorSample>,
+    latest_sample: Option<TelemetrySample>,
     rx_series: Vec<PlotDatum>,
     tx_series: Vec<PlotDatum>,
     signal_series: Vec<PlotDatum>,
@@ -81,18 +80,15 @@ impl MonitorGraphApp {
         egui_context: egui::Context,
         app_name: String,
         app_version: String,
-        receiver: Receiver<MonitorEvent>,
-        shutdown_signal: Arc<AtomicUsize>,
+        receiver: Receiver<GraphEvent>,
     ) -> Self {
         let _profile_scope = profiling::scope("graph.initialize");
         let pending_events = Arc::new(Mutex::new(VecDeque::new()));
         spawn_event_relay(receiver, pending_events.clone(), egui_context);
 
-        let mut latest_error = None;
-        let mut app = Self {
+        Self {
             app_name,
             app_version,
-            shutdown_signal,
             pending_events,
             latest_sample: None,
             rx_series: Vec::new(),
@@ -100,29 +96,26 @@ impl MonitorGraphApp {
             signal_series: Vec::new(),
             latest_error: None,
             follow_latest: true,
-        };
-
-        match load_history_samples() {
-            Ok(samples) => {
-                profiling::record_metric(
-                    "graph.history_samples_loaded",
-                    samples.len() as f64,
-                    "samples",
-                );
-                for sample in samples {
-                    app.push_sample(sample);
-                }
-            }
-            Err(error) => {
-                latest_error = Some(format!("History load failed: {}", error));
-            }
         }
-
-        app.latest_error = latest_error;
-        app
     }
 
-    fn push_sample(&mut self, sample: MonitorSample) {
+    fn replace_history(&mut self, samples: Vec<TelemetrySample>) {
+        self.rx_series.clear();
+        self.tx_series.clear();
+        self.signal_series.clear();
+        self.latest_sample = None;
+
+        profiling::record_metric(
+            "graph.history_samples_loaded",
+            samples.len() as f64,
+            "samples",
+        );
+        for sample in samples {
+            self.push_sample(sample);
+        }
+    }
+
+    fn push_sample(&mut self, sample: TelemetrySample) {
         let timestamp = sample_timestamp(&sample);
         self.rx_series
             .push([timestamp, sample.rx_bps as f64 / 1_000_000.0]);
@@ -149,12 +142,19 @@ impl MonitorGraphApp {
         while let Some(event) = drained_events.pop_front() {
             drained_count += 1;
             match event {
-                MonitorEvent::Sample(sample) => {
-                    self.push_sample(sample);
+                GraphEvent::ReplaceHistory(samples) => {
+                    self.replace_history(samples);
                     self.latest_error = None;
                     changed = true;
                 }
-                MonitorEvent::Error(error) => {
+                GraphEvent::AppendSamples(samples) => {
+                    for sample in samples {
+                        self.push_sample(sample);
+                    }
+                    self.latest_error = None;
+                    changed = true;
+                }
+                GraphEvent::Error(error) => {
                     self.latest_error = Some(error);
                     changed = true;
                 }
@@ -168,15 +168,6 @@ impl MonitorGraphApp {
         changed
     }
 
-    fn latest_sample(&self) -> Option<&MonitorSample> {
-        self.latest_sample.as_ref()
-    }
-
-    fn local_timestamp(sample: &MonitorSample) -> String {
-        let local_time: DateTime<Local> = sample.captured_at.with_timezone(&Local);
-        local_time.format("%Y-%m-%d %H:%M:%S %Z").to_string()
-    }
-
     fn latest_x_bounds(&self, current_bounds: PlotBounds) -> Option<(f64, f64)> {
         let first_ts = self.rx_series.first()?.first().copied()?;
         let latest_ts = self.rx_series.last()?.first().copied()?;
@@ -185,7 +176,6 @@ impl MonitorGraphApp {
         } else {
             first_ts
         };
-
         let max_x = if latest_ts > min_x {
             latest_ts
         } else {
@@ -257,27 +247,17 @@ impl MonitorGraphApp {
     }
 }
 
-impl Drop for MonitorGraphApp {
-    fn drop(&mut self) {
-        request_application_shutdown(self.shutdown_signal.as_ref());
-    }
-}
-
 impl eframe::App for MonitorGraphApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let _profile_scope = profiling::scope("graph.update");
         let _ = self.ingest_events();
 
-        if self.shutdown_signal.load(Ordering::Relaxed) != 0 {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading(format!("{} {}", self.app_name, self.app_version));
-            ui.label("Live SRM uplink telemetry rendered with the native wgpu backend.");
+            ui.label("Live SRM telemetry retrieved from the HTTP API.");
             ui.separator();
 
-            if let Some(sample) = self.latest_sample() {
+            if let Some(sample) = self.latest_sample.as_ref() {
                 ui.horizontal_wrapped(|ui| {
                     ui.strong(format!("Current band: {}", sample.band));
                     ui.label(format!("Signal: {}%", sample.signal_strength));
@@ -289,10 +269,10 @@ impl eframe::App for MonitorGraphApp {
                         "Tx: {:.3} Mbps",
                         sample.tx_bps as f64 / 1_000_000.0
                     ));
-                    ui.label(format!("Updated: {}", Self::local_timestamp(sample)));
+                    ui.label(format!("Updated: {}", local_timestamp(sample)));
                 });
             } else {
-                ui.label("Waiting for the first SRM sample...");
+                ui.label("Waiting for telemetry from the API...");
             }
 
             if let Some(error) = &self.latest_error {
@@ -358,32 +338,13 @@ impl eframe::App for MonitorGraphApp {
     }
 }
 
-fn load_history_samples() -> Result<VecDeque<MonitorSample>> {
-    let _profile_scope = profiling::scope("graph.load_history_samples");
-    let contents = match fs::read_to_string(CSV_FILE_PATH) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(VecDeque::new()),
-        Err(error) => return Err(error.into()),
-    };
-
-    let mut samples = VecDeque::new();
-    for (index, line) in contents.lines().enumerate() {
-        if index == 0 || line.trim().is_empty() {
-            continue;
-        }
-        samples.push_back(parse_history_line(line)?);
-    }
-
-    Ok(samples)
-}
-
 fn spawn_event_relay(
-    receiver: Receiver<MonitorEvent>,
+    receiver: Receiver<GraphEvent>,
     pending_events: PendingEvents,
     ctx: egui::Context,
 ) {
     let _ = thread::Builder::new()
-        .name("srm-monitor-gui-events".to_string())
+        .name("srm-gui-events".to_string())
         .spawn(move || {
             while let Ok(event) = receiver.recv() {
                 if let Ok(mut queue) = pending_events.lock() {
@@ -435,7 +396,6 @@ fn decimate_visible_points(points: &[PlotDatum], max_points: usize) -> Vec<egui_
 
     let stride = ((points.len() - 1) / (max_points - 1)).max(1);
     let mut reduced = Vec::with_capacity(max_points);
-
     let mut index = 0usize;
     while index < points.len() - 1 && reduced.len() < max_points - 1 {
         reduced.push(points[index].into());
@@ -450,44 +410,13 @@ fn decimate_visible_points(points: &[PlotDatum], max_points: usize) -> Vec<egui_
     reduced
 }
 
-fn parse_history_line(line: &str) -> Result<MonitorSample> {
-    let mut fields = line.split(',');
-    let timestamp = fields
-        .next()
-        .ok_or_else(|| anyhow!("missing timestamp field"))?;
-    let band = fields
-        .next()
-        .ok_or_else(|| anyhow!("missing band field"))?
-        .to_string();
-    let signal_strength = fields
-        .next()
-        .ok_or_else(|| anyhow!("missing signal strength field"))?
-        .parse()?;
-    let rx_bps = fields
-        .next()
-        .ok_or_else(|| anyhow!("missing rx field"))?
-        .parse()?;
-    let tx_bps = fields
-        .next()
-        .ok_or_else(|| anyhow!("missing tx field"))?
-        .parse()?;
-
-    if fields.next().is_some() {
-        return Err(anyhow!("unexpected extra CSV fields"));
-    }
-
-    let captured_at = DateTime::parse_from_rfc3339(timestamp)?.with_timezone(&Utc);
-    Ok(MonitorSample {
-        captured_at,
-        band,
-        signal_strength,
-        rx_bps,
-        tx_bps,
-    })
+fn sample_timestamp(sample: &TelemetrySample) -> f64 {
+    sample.timestamp_utc.timestamp_millis() as f64 / 1000.0
 }
 
-fn sample_timestamp(sample: &MonitorSample) -> f64 {
-    sample.captured_at.timestamp_millis() as f64 / 1000.0
+fn local_timestamp(sample: &TelemetrySample) -> String {
+    let local_time: DateTime<Local> = sample.timestamp_utc.with_timezone(&Local);
+    local_time.format("%Y-%m-%d %H:%M:%S %Z").to_string()
 }
 
 fn format_time_axis(mark: GridMark, _range: &RangeInclusive<f64>) -> String {
@@ -513,25 +442,7 @@ fn format_plot_label(name: &str, x: f64, y: f64, y_label: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_history_line() {
-        let sample =
-            parse_history_line("2026-03-15T18:44:12+00:00,5G-1,-54,1200000,2400000").unwrap();
-
-        assert_eq!(sample.band, "5G-1");
-        assert_eq!(sample.signal_strength, -54);
-        assert_eq!(sample.rx_bps, 1_200_000);
-        assert_eq!(sample.tx_bps, 2_400_000);
-    }
-
-    #[test]
-    fn rejects_history_line_with_extra_fields() {
-        let error = parse_history_line("2026-03-15T18:44:12+00:00,5G-1,-54,1200000,2400000,extra")
-            .unwrap_err();
-
-        assert!(error.to_string().contains("unexpected extra CSV fields"));
-    }
+    use chrono::Utc;
 
     #[test]
     fn formats_timestamp_for_axis_labels() {
@@ -544,13 +455,13 @@ mod tests {
             .to_string();
 
         assert_eq!(
-            format_timestamp(sample_timestamp(&MonitorSample {
-                captured_at: utc_time,
-                band: "5G-1".to_string(),
-                signal_strength: -54,
-                rx_bps: 1_200_000,
-                tx_bps: 2_400_000,
-            })),
+            format_timestamp(sample_timestamp(&TelemetrySample::new(
+                utc_time,
+                "5G-1".to_string(),
+                54,
+                1_200_000,
+                2_400_000,
+            ))),
             expected
         );
     }

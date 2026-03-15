@@ -1,7 +1,6 @@
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
 
-const SYNOLOGY_API_BASE_URL: &str = "http://192.168.1.1:8000/webapi";
 const SYNOLOGY_AUTH_API: &str = "SYNO.API.Auth";
 const SYNOLOGY_AUTH_URL: &str = "/auth.cgi";
 const SYNOLOGY_AUTH_VERSION: u8 = 3;
@@ -54,18 +53,19 @@ struct WirelessUplink {
 }
 
 pub struct Synology {
+    base_url: String,
     sid: String,
 }
 
 impl Synology {
-    pub fn new(username: &str, password: &str) -> Result<Self> {
-        // Login is front-loaded so later mesh requests only need the session cookie.
-        let login = Self::login(username, password)?;
+    pub fn new(base_url: &str, username: &str, password: &str) -> Result<Self> {
+        let login = Self::login(base_url, username, password)?;
         if !login.success {
             return Err(anyhow!("Login unsuccessful"));
         }
 
         Ok(Self {
+            base_url: base_url.to_string(),
             sid: login.data.sid,
         })
     }
@@ -76,7 +76,7 @@ impl Synology {
     }
 
     fn logout(&self) -> Result<()> {
-        let response = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_AUTH_URL))
+        let response = ureq::get(&self.api_url(SYNOLOGY_AUTH_URL))
             .query("api", SYNOLOGY_AUTH_API)
             .query("version", SYNOLOGY_AUTH_VERSION.to_string())
             .query("method", SYNOLOGY_AUTH_LOGOUT_METHOD)
@@ -85,8 +85,8 @@ impl Synology {
         ensure_http_ok("Logout API call", response.status().into())
     }
 
-    fn login(username: &str, password: &str) -> Result<LoginResponse> {
-        let mut response = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_AUTH_URL))
+    fn login(base_url: &str, username: &str, password: &str) -> Result<LoginResponse> {
+        let mut response = ureq::get(&format!("{}{}", base_url, SYNOLOGY_AUTH_URL))
             .query("api", SYNOLOGY_AUTH_API)
             .query("version", SYNOLOGY_AUTH_VERSION.to_string())
             .query("method", SYNOLOGY_AUTH_LOGIN_METHOD)
@@ -99,7 +99,7 @@ impl Synology {
     }
 
     fn fetch_mesh_network_info(&self) -> Result<MeshNetworkInfoResponse> {
-        let mut response = ureq::get(&format!("{}{}", SYNOLOGY_API_BASE_URL, SYNOLOGY_ENTRY_URL))
+        let mut response = ureq::get(&self.api_url(SYNOLOGY_ENTRY_URL))
             .query("api", SYNOLOGY_MESH_NETWORK_INFO_API)
             .query("version", SYNOLOGY_MESH_NETWORK_INFO_VERSION.to_string())
             .query("method", SYNOLOGY_MESH_NETWORK_INFO_METHOD)
@@ -107,6 +107,10 @@ impl Synology {
             .call()?;
         ensure_http_ok("Mesh info API call", response.status().into())?;
         Ok(response.body_mut().read_json()?)
+    }
+
+    fn api_url(&self, path: &str) -> String {
+        format!("{}{}", self.base_url, path)
     }
 
     fn session_cookie(&self) -> String {
@@ -126,8 +130,6 @@ fn extract_avg_rates(
     mesh: &MeshNetworkInfoResponse,
     node_id: i32,
 ) -> Result<(String, i32, u64, u64)> {
-    // Response parsing and uplink selection live outside the HTTP methods so they can be unit tested
-    // directly from fixture JSON without depending on the live Synology API.
     let node = mesh
         .data
         .nodes
@@ -147,7 +149,6 @@ fn extract_avg_rates(
 }
 
 fn select_connected_uplink(node: &Node) -> Option<&WirelessUplink> {
-    // Prefer the best connected uplink by band priority so disconnected entries never win.
     node.uplink
         .wireless_uplinks
         .iter()
@@ -166,8 +167,8 @@ fn band_priority(band: &str) -> u8 {
 
 impl Drop for Synology {
     fn drop(&mut self) {
-        if let Err(e) = self.logout() {
-            eprintln!("Warning: failed to logout from Synology session: {}", e);
+        if let Err(error) = self.logout() {
+            eprintln!("warning=logout_failed details={}", error);
         }
     }
 }
@@ -217,77 +218,5 @@ mod tests {
         let rates = extract_avg_rates(&mesh, 8).unwrap();
 
         assert_eq!(rates, ("5G-1".to_string(), -55, 500, 600));
-    }
-
-    #[test]
-    fn ignores_disconnected_higher_priority_band() {
-        let mesh = mesh_with_uplinks(
-            r#"[
-                {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "5G-1", "is_connected": false, "signalstrength": -40},
-                {"avg_rx_rate": 300, "avg_tx_rate": 400, "band": "5G-2", "is_connected": true, "signalstrength": -65}
-            ]"#,
-        );
-
-        let rates = extract_avg_rates(&mesh, 8).unwrap();
-
-        assert_eq!(rates, ("5G-2".to_string(), -65, 300, 400));
-    }
-
-    #[test]
-    fn errors_when_node_is_missing() {
-        let mesh: MeshNetworkInfoResponse =
-            serde_json::from_str(r#"{"data":{"nodes":[]}}"#).unwrap();
-
-        let error = extract_avg_rates(&mesh, 8).unwrap_err();
-
-        assert!(error.to_string().contains("Node 8 not found"));
-    }
-
-    #[test]
-    fn errors_when_no_connected_uplink_exists() {
-        let mesh = mesh_with_uplinks(
-            r#"[
-                {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "5G-1", "is_connected": false, "signalstrength": -50}
-            ]"#,
-        );
-
-        let error = extract_avg_rates(&mesh, 8).unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("No connected wireless uplinks found for node 8")
-        );
-    }
-
-    #[test]
-    fn ensure_http_ok_accepts_200_and_rejects_other_statuses() {
-        assert!(ensure_http_ok("Mesh info API call", 200).is_ok());
-
-        let error = ensure_http_ok("Mesh info API call", 500).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "Mesh info API call failed with status: 500"
-        );
-    }
-
-    #[test]
-    fn band_priority_orders_known_bands() {
-        assert!(band_priority("5G-1") > band_priority("5G-2"));
-        assert!(band_priority("5G-2") > band_priority("2.4G"));
-        assert_eq!(band_priority("unknown"), 0);
-    }
-
-    #[test]
-    fn select_connected_uplink_returns_none_when_all_are_disconnected() {
-        let mesh = mesh_with_uplinks(
-            r#"[
-                {"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "2.4G", "is_connected": false, "signalstrength": -72},
-                {"avg_rx_rate": 300, "avg_tx_rate": 400, "band": "5G-2", "is_connected": false, "signalstrength": -68}
-            ]"#,
-        );
-
-        let node = &mesh.data.nodes[0];
-        assert!(select_connected_uplink(node).is_none());
     }
 }

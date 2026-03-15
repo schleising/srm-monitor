@@ -1,0 +1,13 @@
+[synology]
+base_url = "http://192.168.1.1:8000/webapi"
+node_id = 8
+poll_interval_secs = 1
+
+[synology.credentials]
+username = "your-username"
+password = "your-password"
+
+[mongodb]
+url = "mongodb://127.0.0.1:27017"
+database = "srm"
+collection = "telemetry"
