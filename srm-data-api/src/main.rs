@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
 use mongodb::{Client, Collection};
 use serde::Deserialize;
-use srm_common::config::{ApiConfig, env_or_default_path, load_toml_file};
+use srm_common::config::{ApiConfig, env_or_manifest_path, load_toml_file};
 use srm_common::models::{MongoTelemetryRecord, TelemetrySample};
 
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
@@ -37,7 +37,11 @@ async fn main() {
 
 async fn run() -> Result<()> {
     println!("{} v{}", APP_NAME, APP_VERSION);
-    let config_path = env_or_default_path(CONFIG_ENV_VAR, DEFAULT_CONFIG_PATH);
+    let config_path = env_or_manifest_path(
+        CONFIG_ENV_VAR,
+        DEFAULT_CONFIG_PATH,
+        env!("CARGO_MANIFEST_DIR"),
+    );
     let config: ApiConfig = load_toml_file(&config_path)?;
 
     let client = Client::with_uri_str(&config.mongodb.url).await?;

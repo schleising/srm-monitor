@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::Utc;
 use mongodb::Client;
-use srm_common::config::{ServiceConfig, env_or_default_path, load_toml_file};
+use srm_common::config::{ServiceConfig, env_or_manifest_path, load_toml_file};
 use srm_common::models::{MongoTelemetryRecord, TelemetrySample};
 use srm_common::synology::Synology;
 use tokio::time::{Duration, sleep};
@@ -21,7 +21,11 @@ async fn main() {
 
 async fn run() -> Result<()> {
     println!("{} v{}", APP_NAME, APP_VERSION);
-    let config_path = env_or_default_path(CONFIG_ENV_VAR, DEFAULT_CONFIG_PATH);
+    let config_path = env_or_manifest_path(
+        CONFIG_ENV_VAR,
+        DEFAULT_CONFIG_PATH,
+        env!("CARGO_MANIFEST_DIR"),
+    );
     let config: ServiceConfig = load_toml_file(&config_path)?;
 
     let client = Client::with_uri_str(&config.mongodb.url).await?;

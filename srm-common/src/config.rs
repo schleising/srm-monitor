@@ -10,6 +10,16 @@ pub fn env_or_default_path(env_name: &str, default_path: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(default_path))
 }
 
+pub fn env_or_manifest_path(
+    env_name: &str,
+    default_path: &str,
+    manifest_dir: impl AsRef<Path>,
+) -> PathBuf {
+    std::env::var_os(env_name)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| manifest_dir.as_ref().join(default_path))
+}
+
 pub fn load_toml_file<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<T> {
     let path = path.as_ref();
     let contents = fs::read_to_string(path)
@@ -97,4 +107,36 @@ fn default_refresh_interval_secs() -> u64 {
 
 fn default_history_start() -> String {
     "1970-01-01T00:00:00Z".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uses_manifest_relative_default_when_env_not_set() {
+        let env_name = "SRM_TEST_CONFIG_PATH_DEFAULT";
+        unsafe {
+            std::env::remove_var(env_name);
+        }
+
+        let path = env_or_manifest_path(env_name, "config/service.toml", "/tmp/srm-monitor");
+
+        assert_eq!(path, PathBuf::from("/tmp/srm-monitor/config/service.toml"));
+    }
+
+    #[test]
+    fn env_override_takes_priority() {
+        let env_name = "SRM_TEST_CONFIG_PATH_OVERRIDE";
+        unsafe {
+            std::env::set_var(env_name, "custom/config.toml");
+        }
+
+        let path = env_or_manifest_path(env_name, "config/service.toml", "/tmp/srm-monitor");
+
+        assert_eq!(path, PathBuf::from("custom/config.toml"));
+        unsafe {
+            std::env::remove_var(env_name);
+        }
+    }
 }

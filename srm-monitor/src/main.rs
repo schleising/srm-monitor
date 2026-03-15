@@ -2,7 +2,7 @@ mod graph;
 mod profiling;
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeDelta, Utc};
-use srm_common::config::{ApiClientSettings, GuiConfig, env_or_default_path, load_toml_file};
+use srm_common::config::{ApiClientSettings, GuiConfig, env_or_manifest_path, load_toml_file};
 use srm_common::models::TelemetrySample;
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -16,7 +16,11 @@ const DEFAULT_CONFIG_PATH: &str = "config/gui.toml";
 fn run() -> Result<()> {
     let _profiling_session = profiling::init_from_env()?;
     println!("{} v{}", APP_NAME, APP_VERSION);
-    let config_path = env_or_default_path(CONFIG_ENV_VAR, DEFAULT_CONFIG_PATH);
+    let config_path = env_or_manifest_path(
+        CONFIG_ENV_VAR,
+        DEFAULT_CONFIG_PATH,
+        env!("CARGO_MANIFEST_DIR"),
+    );
     let config: GuiConfig = load_toml_file(&config_path)?;
     let (event_sender, event_receiver) = std::sync::mpsc::channel();
 

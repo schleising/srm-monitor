@@ -34,6 +34,8 @@ Default runtime config paths:
 - `srm-data-api/config/api.toml`
 - `srm-monitor/config/gui.toml`
 
+When launched from the workspace root with `cargo run -p ...`, each application resolves its default config relative to its own crate directory.
+
 Optional environment variables can override those paths:
 
 - `SRM_MONITOR_SERVICE_CONFIG`
