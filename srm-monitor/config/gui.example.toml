@@ -1,4 +1,4 @@
 [api]
 base_url = "http://127.0.0.1:6081"
-refresh_interval_secs = 1
+refresh_interval_secs = 30
 history_start = "1970-01-01T00:00:00Z"

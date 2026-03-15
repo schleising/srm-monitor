@@ -21,7 +21,7 @@ cat > "$SRM_MONITOR_SERVICE_CONFIG" <<EOF
 [synology]
 base_url = "$synology_base_url"
 node_id = ${SRM_SYNOLOGY_NODE_ID:-8}
-poll_interval_secs = ${SRM_SYNOLOGY_POLL_INTERVAL_SECS:-1}
+poll_interval_secs = ${SRM_SYNOLOGY_POLL_INTERVAL_SECS:-30}
 
 [synology.credentials]
 username = "$synology_username"

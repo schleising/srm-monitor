@@ -9,7 +9,7 @@ use futures_util::TryStreamExt;
 use mongodb::{Client, Collection};
 use serde::Deserialize;
 use srm_common::config::{ApiConfig, env_or_manifest_path, load_toml_file};
-use srm_common::models::{MongoTelemetryRecord, TelemetrySample};
+use srm_common::models::{MongoTelemetryRecord, TelemetrySample, ensure_telemetry_indexes};
 
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -45,11 +45,12 @@ async fn run() -> Result<()> {
     let config: ApiConfig = load_toml_file(&config_path)?;
 
     let client = Client::with_uri_str(&config.mongodb.url).await?;
-    let state = AppState {
-        collection: client
-            .database(&config.mongodb.database)
-            .collection::<MongoTelemetryRecord>(&config.mongodb.collection),
-    };
+    let collection = client
+        .database(&config.mongodb.database)
+        .collection::<MongoTelemetryRecord>(&config.mongodb.collection);
+    ensure_telemetry_indexes(&collection).await?;
+
+    let state = AppState { collection };
 
     let app = Router::new()
         .route("/telemetry", get(fetch_telemetry))

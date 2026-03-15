@@ -1,7 +1,7 @@
 [synology]
 base_url = "http://192.168.1.1:8000/webapi"
 node_id = 8
-poll_interval_secs = 1
+poll_interval_secs = 30
 
 [synology.credentials]
 username = "your-username"

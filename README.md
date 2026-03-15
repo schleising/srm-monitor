@@ -85,6 +85,8 @@ docker compose down
 
 The browser dashboard will be available at `http://127.0.0.1:6080`, and the API will be available at `http://127.0.0.1:6081/telemetry` on the host.
 
+MongoDB keeps a one-week rolling retention window for telemetry documents via a TTL index on `timestamp_utc`. That same single-field index is used for the API's time-range queries.
+
 ## Run
 
 Start the Mongo writer:

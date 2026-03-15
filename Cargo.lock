@@ -3310,6 +3310,8 @@ dependencies = [
  "anyhow",
  "bson",
  "chrono",
+ "futures-util",
+ "mongodb",
  "serde",
  "serde_json",
  "toml",

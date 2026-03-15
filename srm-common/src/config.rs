@@ -116,7 +116,7 @@ fn default_node_id() -> i32 {
 }
 
 fn default_poll_interval_secs() -> u64 {
-    1
+    30
 }
 
 fn default_api_bind_address() -> String {
@@ -128,7 +128,7 @@ fn default_web_bind_address() -> String {
 }
 
 fn default_refresh_interval_secs() -> u64 {
-    1
+    30
 }
 
 fn default_history_start() -> String {

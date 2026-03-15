@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use mongodb::Client;
 use srm_common::config::{ServiceConfig, env_or_manifest_path, load_toml_file};
-use srm_common::models::{MongoTelemetryRecord, TelemetrySample};
+use srm_common::models::{MongoTelemetryRecord, TelemetrySample, ensure_telemetry_indexes};
 use srm_common::synology::Synology;
 use tokio::time::{Duration, sleep};
 
@@ -32,6 +32,7 @@ async fn run() -> Result<()> {
     let collection = client
         .database(&config.mongodb.database)
         .collection::<MongoTelemetryRecord>(&config.mongodb.collection);
+    ensure_telemetry_indexes(&collection).await?;
 
     let mut last_band: Option<String> = None;
     let mut synology: Option<Synology> = None;

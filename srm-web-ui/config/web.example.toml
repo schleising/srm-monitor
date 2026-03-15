@@ -3,5 +3,5 @@ bind_address = "127.0.0.1:6080"
 
 [api]
 base_url = "http://127.0.0.1:6081"
-refresh_interval_secs = 1
+refresh_interval_secs = 30
 history_window_secs = 300

@@ -1,7 +1,12 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use bson::{DateTime as BsonDateTime, oid::ObjectId};
 use chrono::{DateTime, Utc};
+use futures_util::TryStreamExt;
+use mongodb::{Collection, IndexModel, options::IndexOptions};
 use serde::{Deserialize, Serialize};
+
+pub const TELEMETRY_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
+const TELEMETRY_TIMESTAMP_INDEX_NAME: &str = "telemetry_timestamp_ttl";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct TelemetrySample {
@@ -72,4 +77,63 @@ impl TryFrom<MongoTelemetryRecord> for TelemetrySample {
             tx_bps: record.tx_bps,
         })
     }
+}
+
+pub async fn ensure_telemetry_indexes(
+    collection: &Collection<MongoTelemetryRecord>,
+) -> Result<()> {
+    let desired_key = bson::doc! { "timestamp_utc": 1 };
+    let desired_expire_after = std::time::Duration::from_secs(TELEMETRY_RETENTION_SECS);
+    let existing_indexes: Vec<IndexModel> = collection
+        .list_indexes()
+        .await
+        .context("failed to list telemetry indexes")?
+        .try_collect()
+        .await
+        .context("failed to read telemetry indexes")?;
+    let mut has_desired_index = false;
+
+    for index in existing_indexes {
+        if index.keys != desired_key {
+            continue;
+        }
+
+        let index_name = index.options.as_ref().and_then(|options| options.name.as_deref());
+        let expire_after = index.options.as_ref().and_then(|options| options.expire_after);
+
+        if index_name == Some(TELEMETRY_TIMESTAMP_INDEX_NAME)
+            && expire_after == Some(desired_expire_after)
+        {
+            has_desired_index = true;
+            continue;
+        }
+
+        if let Some(index_name) = index_name {
+            collection
+                .drop_index(index_name)
+                .await
+                .with_context(|| format!("failed to drop legacy telemetry index {index_name}"))?;
+        }
+    }
+
+    if has_desired_index {
+        return Ok(());
+    }
+
+    let ttl_timestamp_index = IndexModel::builder()
+        .keys(desired_key)
+        .options(
+            IndexOptions::builder()
+                .name(Some(TELEMETRY_TIMESTAMP_INDEX_NAME.to_string()))
+                .expire_after(Some(desired_expire_after))
+                .build(),
+        )
+        .build();
+
+    collection
+        .create_index(ttl_timestamp_index)
+        .await
+        .context("failed to create telemetry TTL index")?;
+
+    Ok(())
 }
