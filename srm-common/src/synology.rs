@@ -135,7 +135,20 @@ fn extract_avg_rates(
         .nodes
         .iter()
         .find(|candidate| candidate.node_id == node_id)
-        .ok_or_else(|| anyhow!("Node {} not found", node_id))?;
+        .ok_or_else(|| {
+            let available_ids: Vec<_> = mesh
+                .data
+                .nodes
+                .iter()
+                .map(|candidate| candidate.node_id.to_string())
+                .collect();
+            let available = if available_ids.is_empty() {
+                "none".to_string()
+            } else {
+                available_ids.join(", ")
+            };
+            anyhow!("Node {} not found (available: {})", node_id, available)
+        })?;
 
     let uplink = select_connected_uplink(node)
         .ok_or_else(|| anyhow!("No connected wireless uplinks found for node {}", node_id))?;
@@ -183,7 +196,7 @@ mod tests {
                 "data": {{
                     "nodes": [
                         {{
-                            "node_id": 8,
+                            "node_id": 11,
                             "uplink": {{
                                 "wireless_uplinks": {}
                             }}
@@ -218,5 +231,16 @@ mod tests {
         let rates = extract_avg_rates(&mesh, 8).unwrap();
 
         assert_eq!(rates, ("5G-1".to_string(), -55, 500, 600));
+    }
+
+    #[test]
+    fn missing_node_lists_available_ids() {
+        let mesh = mesh_with_uplinks(
+            r#"[{"avg_rx_rate": 100, "avg_tx_rate": 200, "band": "5G-1", "is_connected": true, "signalstrength": -55}]"#,
+        );
+
+        let error = extract_avg_rates(&mesh, 11).unwrap_err().to_string();
+
+        assert_eq!(error, "Node 11 not found (available: 8)");
     }
 }

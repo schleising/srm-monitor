@@ -112,7 +112,7 @@ fn default_synology_base_url() -> String {
 }
 
 fn default_node_id() -> i32 {
-    8
+    11
 }
 
 fn default_poll_interval_secs() -> u64 {

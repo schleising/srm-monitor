@@ -20,7 +20,7 @@ mongodb_collection=$(escape_toml_string "${SRM_MONGODB_COLLECTION:-telemetry}")
 cat > "$SRM_MONITOR_SERVICE_CONFIG" <<EOF
 [synology]
 base_url = "$synology_base_url"
-node_id = ${SRM_SYNOLOGY_NODE_ID:-8}
+node_id = ${SRM_SYNOLOGY_NODE_ID:-11}
 poll_interval_secs = ${SRM_SYNOLOGY_POLL_INTERVAL_SECS:-30}
 
 [synology.credentials]

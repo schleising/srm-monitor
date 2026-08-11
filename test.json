@@ -36,7 +36,7 @@
                 ]
             },
             {
-                "node_id": 8,
+                "node_id": 11,
                 "parent_node_id": 0,
                 "uplink": {
                     "is_ethernet_connected": false,
